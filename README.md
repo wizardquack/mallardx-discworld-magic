@@ -85,11 +85,4 @@ Consumers today:
 
 (Prior to 2026-05-28 these were `net.mallard.discworld.{tpa,eff}.{up,down}`.
 The unified surface was introduced alongside the discworld-grouping
-shield-row work — see
-`docs/superpowers/specs/2026-05-28-discworld-group-shields-design.md`.)
-
-## Dev rebuild
-
-```sh
-bash scripts/reinstall.sh
-```
+shield-row work.)
