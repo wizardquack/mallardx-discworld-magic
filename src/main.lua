@@ -485,17 +485,32 @@ mud.alias([[^!eff$]], function()
 end)
 
 -- ---------------------------------------------------------------------
--- === contemplation completion — refresh vitals on trance exit ===
+-- === contemplation completion — zero gp on trance exit ===
 -- ---------------------------------------------------------------------
 -- "You emerge from your trance." fires when a spell contemplation ends
--- (either naturally or via interruption — movement, combat, etc.). In
--- both cases gp drops to 0, but the server doesn't push a fresh
--- Char.Vitals frame on its own. A bare-Enter is a no-op command that
--- still produces a prompt, and Discworld piggybacks Char.Vitals on the
--- prompt — so the vitals mirror catches up on the next tick.
+-- (natural completion OR interruption — movement, combat, etc.). In both
+-- cases gp drops to 0, but the server doesn't push a fresh Char.Vitals
+-- frame. Port of Quow's HandleContemplateEnd (QuowMinimap.xml:22990): on
+-- emerge, force gp=0 in the vitals mirror via a cross-plugin event.
+--
+-- The trigger is armed only between contemplate-start and emerge so the
+-- phrase can't misfire on stray text (mirrors Quow's pattern of enabling
+-- the ContemplateEnd trigger from ContemplateStart). Idle state ignores
+-- emerge lines entirely.
+
+local contemplating = false
+
+mud.trigger([[^With .+ at the forefront of your mind, you enter a deep trance\.$]], function()
+  contemplating = true
+end)
 
 mud.trigger([[^You emerge from your trance\.$]], function()
-  mud.send("")
+  if not contemplating then return end
+  contemplating = false
+  events.emit("net.mallard.discworld.gp.zero", {
+    subject = "self",
+    reason  = "trance_emerge",
+  })
 end)
 
 -- ---------------------------------------------------------------------
