@@ -2,10 +2,7 @@
 --
 -- Ported from tt_dw's `/spell` (~/code/3p/tt_dw/scripts/magic/spellinfo.tin).
 -- The original supports lookups by nickname, name fragment, description
--- fragment, tome, or skill/method (the last → TM probability list, which
--- needs the player's skill levels). v1 here keeps the lookup paths and
--- drops the TM/spellcheck path — that requires tracking skills from the
--- server, out of scope for this command alone.
+-- fragment, tome, or skill/method.
 --
 -- Usage at runtime:
 --   /spell           → multi-column list of nicknames grouped by type
@@ -21,8 +18,20 @@
 --   Offensive     → red, bold
 --   Defensive     → green
 --   Miscellaneous → cyan
+--
+-- Skill awareness:
+--   discworld-vitals owns the `skills raw` parser and emits
+--   `net.mallard.discworld.skills.updated` { charname, snapshot } whenever
+--   a fresh snapshot lands. We subscribe to it, cache the snapshot, and at
+--   load time fire `net.mallard.discworld.skills.request` so we get any
+--   already-stored snapshot replayed for us. The snapshot's `level[path]`
+--   and `bonus[path]` tables let us add four skill-aware columns to the
+--   spellcheck table: Chance / Bonus / Level / Hint. Without a snapshot
+--   we render the bare threshold grid only — the user can run
+--   `/skills-refresh` (vitals' alias) to populate it.
 
-local spells = require("spelldata")
+local spells      = require("spelldata")
+local SKILL_PATHS = require("skill_paths")
 
 -- Type → mud.note style. Used for both inline spell-name colouring inside
 -- the info card and for the per-type headers in the list view.
@@ -86,8 +95,15 @@ end
 --   - Spellcheck header   → light green + bold
 --   - Spellcheck columns  → bold header row, cyan body rows
 --
--- TM / probability columns (Chance, Bonus, Level, Hint) from tt_dw are
--- intentionally omitted — they require the player's skill levels.
+-- When a skills snapshot from discworld-vitals is available, the table
+-- gains four trailing columns:
+--   Chance  passed*10 % (clamped to <1% / >99%; see compute_chance)
+--   Bonus   current bonus in the skill
+--   Level   current level in the skill
+--   Hint    bonus delta needed to reach the next tier (50% / >99%)
+-- Each spellcheck row still gets a single per-line colour (whole-line
+-- styling only in v1) — Chance is NOT per-tier coloured, which is the
+-- one visible departure from tt_dw's coloured-percentage rendering.
 
 local LABEL_STYLE = { fg = "light green" }
 local TOME_STYLE  = { fg = "yellow" }
@@ -95,12 +111,126 @@ local SC_HEADER_STYLE = { fg = "light green", bold = true }
 local SC_COL_STYLE    = { fg = "white", bold = true }
 local SC_ROW_STYLE    = { fg = "cyan" }
 
+-- ---------------------------------------------------------------------
+-- Skills snapshot (from discworld-vitals)
+-- ---------------------------------------------------------------------
+-- We hold the latest snapshot we've been told about in `skills_snapshot`,
+-- updated whenever vitals broadcasts `net.mallard.discworld.skills.updated`
+-- (live after a /skills-refresh, or as a replay in response to our
+-- `skills.request`).
+--
+-- We request the snapshot in two places:
+--   1. At module load — covers the common case of vitals already having
+--      data cached on disk when our plugin starts up.
+--   2. Every time we render an info card (see `refresh_skills_snapshot`
+--      below) — covers the case where the load-time request raced with
+--      vitals' own startup, OR where the user has hot-reloaded one of
+--      the two plugins and the on-load handshake didn't complete. Mallard
+--      delivers events synchronously, so vitals' replay reaches us before
+--      `events.emit` returns — meaning the snapshot is populated in time
+--      for the very render that just asked for it.
+--
+-- If vitals isn't loaded at all, or doesn't have a snapshot, the request
+-- is a silent no-op and we fall back to the no-skills card layout.
+
+local skills_snapshot = nil
+
+events.on("net.mallard.discworld.skills.updated", function(data)
+  if type(data) == "table" and type(data.snapshot) == "table" then
+    skills_snapshot = data.snapshot
+  end
+end)
+
+local function refresh_skills_snapshot()
+  events.emit("net.mallard.discworld.skills.request", {})
+end
+
+refresh_skills_snapshot()
+
+-- For a parsed spellcheck row, look up the current (level, bonus) in
+-- the cached snapshot. Returns (level, bonus) — both nil if we don't
+-- have data for that skill (no snapshot, or snapshot doesn't carry
+-- the skill, or skill name isn't in our short→path map).
+local function skill_lookup(skill_short_name)
+  if not skills_snapshot then return nil, nil end
+  local path = SKILL_PATHS[skill_short_name]
+  if not path then return nil, nil end
+  return skills_snapshot.level and skills_snapshot.level[path],
+         skills_snapshot.bonus and skills_snapshot.bonus[path]
+end
+
+-- ---------------------------------------------------------------------
+-- TM probability math — mirrors tt_dw's /spellcheck (spellinfo.tin
+-- §321-460). Each spellcheck row carries 10 ascending bonus thresholds;
+-- we count how many your current bonus meets-or-beats, multiply by 10
+-- for the chance%, then bucket the extremes for readability:
+--   passed = 0       → "<1%"      ("to even try")
+--   passed = 10      → ">99%"     (max)
+--   1..9             → "10%".."90%" linearly
+-- ---------------------------------------------------------------------
+
+local function compute_chance(bonus, thresholds)
+  -- thresholds is the 10-string list from the spellcheck row.
+  local passed = 0
+  for _, t in ipairs(thresholds) do
+    local n = tonumber(t)
+    if n and bonus >= n then passed = passed + 1 end
+  end
+  -- Edge labels match tt_dw's wording.
+  local label
+  if     passed == 0  then label = "<1%"
+  elseif passed >= 10 then label = ">99%"
+  else                     label = tostring(passed * 10) .. "%"
+  end
+  return passed, label
+end
+
+-- Hint text targets the chance% you'd reach with the suggested bonus
+-- bump. Chance = passed * 10, so each threshold N corresponds to an N*10%
+-- chance band. The "next milestone" we point at depends on where you are:
+--   passed = 0      → delta to threshold[1]  → 10% chance
+--   passed 1..4     → delta to threshold[5]  → 50% chance
+--   passed 5..9     → delta to threshold[10] → >99% chance
+--   passed = 10     → "max" (nothing left to chase)
+-- The original tt_dw additionally translates the bonus delta to a level
+-- via @level_for_bonus, which depends on the skill's stat multiplicator.
+-- We don't have stat data, so we just report the bonus delta — that's
+-- the proximate, true number; mapping to levels is a derived display.
+--
+-- Layout note: number-first phrasing (`+Nb for X%`) reads as "spend +N
+-- bonus to unlock X% chance". The trailing `b` is a unit suffix that
+-- disambiguates +N from being a level delta — bonus and level are right
+-- next to each other in the row. We left-align the column so every
+-- row's "+" lands at the same column position.
+local function compute_hint(bonus, passed, thresholds)
+  local target_idx, target_label
+  if passed == 0 then
+    target_idx, target_label = 1, "10%"
+  elseif passed < 5 then
+    target_idx, target_label = 5, "50%"
+  elseif passed < 10 then
+    target_idx, target_label = 10, ">99%"
+  else
+    return "max"
+  end
+  local need = tonumber(thresholds[target_idx])
+  if not need then return "" end
+  local delta = need - bonus
+  if delta <= 0 then return target_label end   -- shouldn't happen given passed semantics, but cheap guard
+  return string.format("+%db for %s", delta, target_label)
+end
+
 -- Build the spellcheck table from the parsed rows. Each row in
 -- `s.spellcheck` is { stage, skill, nums = { 10 strings } }. tt_dw
 -- groups the ten thresholds visually as Fail (1-4) / Maybe (5-8) /
 -- Success (9-10), separating bands with extra space.
 local function render_spellcheck(rows)
   if not rows or #rows == 0 then return end
+
+  -- Pull the latest snapshot from vitals right before we decide what to
+  -- render. See refresh_skills_snapshot's header comment for why this
+  -- isn't redundant with the on-load request.
+  refresh_skills_snapshot()
 
   -- Compute column widths. Skill column hugs the widest skill name.
   -- Number columns are uniform width sized to the widest threshold so
@@ -127,27 +257,113 @@ local function render_spellcheck(rows)
   local maybe_w   = 4 * num_w + 3
   local success_w = 2 * num_w + 1
 
+  -- Decide whether to render the skill-aware trailing columns. We need
+  -- a snapshot at all, AND at least one row whose skill resolves; if
+  -- only some rows resolve, the resolved ones get filled cells and the
+  -- rest get blanks (so the grid stays aligned).
+  local show_skills_cols = false
+  if skills_snapshot then
+    for _, r in ipairs(rows) do
+      local _, bonus = skill_lookup(r.skill)
+      if bonus then show_skills_cols = true; break end
+    end
+  end
+
   mud.note("  Spellcheck:", SC_HEADER_STYLE)
 
-  -- Header row: "Skill   Fail   Maybe   Success" — band labels are
-  -- aligned to the first *digit* of each band's first cell, not its
-  -- left edge. Each number cell is right-justified within `num_w`, so
-  -- the first cell of a band like " 170" has a leading pad space; we
-  -- prepend a matching space to each band label so "Fail" lines up
-  -- over "170" rather than over the pad space.
-  local header = string.format(
-    "    %-" .. skill_w .. "s   %-" .. fail_w .. "s  %-" .. maybe_w .. "s  %-" .. success_w .. "s",
-    "Skill", "Fail", "Maybe", "Success")
-  mud.note(header, SC_COL_STYLE)
+  -- Column geometry:
+  --   * Inter-column gap is a uniform 2 spaces everywhere (in both the
+  --     header and the data rows). This keeps the right edge of every
+  --     header label aligned with the right edge of every data cell, so
+  --     "Chance" / "Level" / "Bonus" line up cleanly with their values.
+  --   * Band labels "Fail" and "Maybe" sit one column right of their
+  --     band's left edge so they land over the first *digit* of the
+  --     band's first cell (each number cell is right-justified within
+  --     `num_w` and starts with a pad space). We accomplish that by
+  --     prepending a literal space INSIDE the label string before
+  --     passing it to `%-Ns`. The third band label is the verb form
+  --     "Succeed" (mnemonic for "what bonus succeeds at this stage")
+  --     and is *right*-aligned in its field instead — its "d" lands
+  --     under the rightmost digit of the band's last cell, which is
+  --     the maximum-success-chance bonus.
+  --   * Skill-aware trailing columns use widths sized to their worst-
+  --     case content. The Hint column is right-aligned across the board
+  --     (header + every value) — the bonus delta varies between 2 and
+  --     3 digits ("+92b for 10%" vs "+117b for 10%"), and right-aligning
+  --     keeps the trailing "%" / "x" of every row landing under the "t"
+  --     of "Hint". Left-aligning instead left the "%" signs ragged.
+  local chance_w = 6   -- ">99%" / "<1%" / "100%" all fit; header "Chance" = 6
+  local level_w  = 5   -- "Level"
+  local bonus_w  = 5   -- "Bonus"
 
+  -- Pre-compute every row's chance/level/bonus/hint strings so we can
+  -- size the Hint column to the widest actual hint we'll print.
+  local computed = {}
+  local hint_w   = #"Hint"
   for _, r in ipairs(rows) do
-    local row = string.format(
-      "    %-" .. skill_w .. "s  %s  %s  %s",
-      r.skill,
-      band(1, 4,  r.nums),
-      band(5, 8,  r.nums),
-      band(9, 10, r.nums))
-    mud.note(row, SC_ROW_STYLE)
+    local row_view = { skill = r.skill, nums = r.nums }
+    if show_skills_cols then
+      local level, bonus = skill_lookup(r.skill)
+      if bonus then
+        local passed, chance_label = compute_chance(bonus, r.nums)
+        row_view.chance  = chance_label
+        row_view.level_s = level and tostring(level) or "-"
+        row_view.bonus_s = tostring(bonus)
+        row_view.hint    = compute_hint(bonus, passed, r.nums)
+        if #row_view.hint > hint_w then hint_w = #row_view.hint end
+      else
+        row_view.chance, row_view.level_s, row_view.bonus_s, row_view.hint = "", "", "", ""
+      end
+    end
+    computed[#computed + 1] = row_view
+  end
+
+  if show_skills_cols then
+    -- "Hint" header is right-aligned (no `-` flag on the last %Ns) so
+    -- its "t" lands at the column's right edge — sitting over the
+    -- right-aligned "max" value and over the trailing "%" of the longer
+    -- "+Nb for X%" hints. "Succeed" is also right-aligned (its "d"
+    -- lands over the max-chance bonus); Fail / Maybe stay left-aligned
+    -- with a prepended space so they land over the first digit.
+    local header = string.format(
+      "    %-" .. skill_w .. "s  %-" .. fail_w .. "s  %-" .. maybe_w .. "s  %" .. success_w .. "s  %" .. chance_w .. "s  %" .. level_w .. "s  %" .. bonus_w .. "s  %" .. hint_w .. "s",
+      "Skill", " Fail", " Maybe", "Succeed", "Chance", "Level", "Bonus", "Hint")
+    mud.note(header, SC_COL_STYLE)
+  else
+    local header = string.format(
+      "    %-" .. skill_w .. "s  %-" .. fail_w .. "s  %-" .. maybe_w .. "s  %" .. success_w .. "s",
+      "Skill", " Fail", " Maybe", "Succeed")
+    mud.note(header, SC_COL_STYLE)
+  end
+
+  for _, rv in ipairs(computed) do
+    if show_skills_cols then
+      local row = string.format(
+        "    %-" .. skill_w .. "s  %s  %s  %s  %" .. chance_w .. "s  %" .. level_w .. "s  %" .. bonus_w .. "s  %" .. hint_w .. "s",
+        rv.skill,
+        band(1, 4,  rv.nums),
+        band(5, 8,  rv.nums),
+        band(9, 10, rv.nums),
+        rv.chance, rv.level_s, rv.bonus_s, rv.hint)
+      mud.note(row, SC_ROW_STYLE)
+    else
+      local row = string.format(
+        "    %-" .. skill_w .. "s  %s  %s  %s",
+        rv.skill,
+        band(1, 4,  rv.nums),
+        band(5, 8,  rv.nums),
+        band(9, 10, rv.nums))
+      mud.note(row, SC_ROW_STYLE)
+    end
+  end
+
+  -- Footer hint when we don't have skills data: tell the user how to
+  -- get the trailing columns. Silent if vitals isn't loaded at all —
+  -- the request event simply went unanswered, and an unprompted "go
+  -- install vitals" plug is more noise than help.
+  if not show_skills_cols then
+    mud.note("  (Tip: run /skills-refresh with the discworld-vitals plugin installed to additionally see success chance / current bonus / hint columns.)",
+      { italic = true })
   end
 end
 
