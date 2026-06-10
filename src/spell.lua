@@ -80,36 +80,109 @@ end
 -- Output formatting
 -- ---------------------------------------------------------------------
 --
--- Mallard's `mud.note` styles the whole line at once (no inline span
--- API in v1), so the card uses per-line colour tiers instead of mixing
--- colours within a line:
+-- mud.span(text, opts) returns a styled span; mud.note(span1, span2, ...)
+-- takes varargs and concatenates them into a single output line, so each
+-- column / sub-region can carry its own colour. Spans reject empty text
+-- and newlines — inter-column gutters MUST be at least one space.
 --
---   - Spell-name header   → type-tier (red / green / cyan) + bold +
---                           underline (acts as the visual divider between
---                           the title and the body of the card)
---   - Description         → type-tier + italic
---   - Stat / label lines  → light green (the "field-name" colour in
---                           tt_dw's /spellinfo output; reads as a band
---                           of metadata against the white wire text)
---   - Tome                → yellow
---   - Spellcheck header   → light green + bold
---   - Spellcheck columns  → bold header row, cyan body rows
+-- Colour scheme (matches tt_dw's /spellinfo + /spellcheck):
 --
--- When a skills snapshot from discworld-vitals is available, the table
--- gains four trailing columns:
---   Chance  passed*10 % (clamped to <1% / >99%; see compute_chance)
---   Bonus   current bonus in the skill
---   Level   current level in the skill
---   Hint    bonus delta needed to reach the next tier (50% / >99%)
--- Each spellcheck row still gets a single per-line colour (whole-line
--- styling only in v1) — Chance is NOT per-tier coloured, which is the
--- one visible departure from tt_dw's coloured-percentage rendering.
+--   - Spell name        → type-tier (red bold / green / cyan) + underline
+--   - " (nick)" suffix  → type-tier, no bold/underline (title vs metadata)
+--   - Description       → type-tier + italic
+--   - Field labels      → light green; values in default/white
+--   - Components item   → magenta; "(consumed)" parenthetical → light magenta
+--   - Tome value        → yellow + underline (tt_dw renders it as a link)
+--   - Band labels       → Fail red, Maybe yellow, Succeed light green +bold
+--   - Threshold cells   → per-cell tier colour (see threshold_style below)
+--   - Chance %          → tier-coloured by chance level
+--   - Hint              → tier colour matching the current Chance
+--   - Clickable nicks   → underlined; on_click drills into /spell <nick>
 
-local LABEL_STYLE = { fg = "light green" }
-local TOME_STYLE  = { fg = "yellow" }
-local SC_HEADER_STYLE = { fg = "light green", bold = true }
-local SC_COL_STYLE    = { fg = "white", bold = true }
-local SC_ROW_STYLE    = { fg = "cyan" }
+local PALETTE = {
+  -- Tier colours for spellcheck table cells & chance %.
+  --   tier_low  — failing this threshold (player's bonus is below it)
+  --   tier_mid  — boundary / 50% chance
+  --   tier_high — passing this threshold (player's bonus meets/exceeds it)
+  tier_low  = { fg = "light red" },
+  tier_mid  = { fg = "yellow" },
+  tier_high = { fg = "light green" },
+
+  -- Field-label / value scheme used across the card body.
+  label     = { fg = "light green" },
+  bold_label = { fg = "light green", bold = true },
+
+  -- Spellcheck non-band column headers (Skill / Chance / Level / Bonus / Hint).
+  col_header = { fg = "white", bold = true },
+
+  -- Skill name column in spellcheck rows.
+  skill_name = { fg = "cyan" },
+
+  -- Components: split into body and parenthetical accent.
+  comp_body  = { fg = "magenta" },
+  comp_paren = { fg = "light magenta", bold = true },
+
+  -- Tome: yellow + underline. tt_dw renders it as a clickable book lookup;
+  -- the underline at least signals "this is the canonical name to search".
+  tome      = { fg = "yellow", underline = true },
+
+  -- "max" hint cell: green bold (you're done; nothing left to chase).
+  hint_max  = { fg = "light green", bold = true },
+}
+
+-- ---------------------------------------------------------------------
+-- Style helpers (skills-aware coloring)
+-- ---------------------------------------------------------------------
+
+-- chance_style(passed) → style for the Chance % cell (and the Hint cell,
+-- which we colour by current chance tier to draw the eye to advancement
+-- opportunities). Buckets match tt_dw's /spellcheck:
+--   passed = 0      → red bold      ("<1%", can't even try meaningfully)
+--   passed 1..4     → red           ("10%-40%")
+--   passed 5        → yellow        ("50%" — boundary)
+--   passed 6..9     → light green   ("60%-90%")
+--   passed = 10     → light green bold (">99%", max)
+local function chance_style(passed)
+  if passed == 0     then return { fg = "light red",   bold = true } end
+  if passed < 5      then return { fg = "light red"                } end
+  if passed == 5     then return { fg = "yellow"                   } end
+  if passed < 10     then return { fg = "light green"              } end
+  return                  { fg = "light green", bold = true }
+end
+
+-- threshold_style(bonus, threshold, passed_last, position) → (style, new_passed_last)
+-- Mirrors tt_dw's per-cell colouring in /spellcheck (spellinfo.tin §409-420):
+--   bonus >= threshold        → tier_high (you pass this)
+--   else, immediately after a pass → tier_mid (boundary marker)
+--   else                      → tier_low (clearly failing)
+-- When bonus is nil (no skills snapshot for this skill), fall back to the
+-- per-band position tier so the table still has visual structure: Fail
+-- positions red, Maybe yellow, Succeed light green.
+local function threshold_style(bonus, threshold, passed_last, position)
+  if bonus ~= nil then
+    local t = tonumber(threshold)
+    if t and bonus >= t then
+      return PALETTE.tier_high, true
+    elseif passed_last then
+      return PALETTE.tier_mid, false
+    else
+      return PALETTE.tier_low, false
+    end
+  else
+    if     position == "fail"  then return PALETTE.tier_low,  false
+    elseif position == "maybe" then return PALETTE.tier_mid,  false
+    else                            return PALETTE.tier_high, false
+    end
+  end
+end
+
+-- Tier position for a 1-based threshold index. Bands 1-4 = Fail,
+-- 5-8 = Maybe, 9-10 = Succeed.
+local function position_for(i)
+  if i <= 4 then return "fail"
+  elseif i <= 8 then return "maybe"
+  else return "succeed" end
+end
 
 -- ---------------------------------------------------------------------
 -- Skills snapshot (from discworld-vitals)
@@ -223,7 +296,8 @@ end
 -- Build the spellcheck table from the parsed rows. Each row in
 -- `s.spellcheck` is { stage, skill, nums = { 10 strings } }. tt_dw
 -- groups the ten thresholds visually as Fail (1-4) / Maybe (5-8) /
--- Success (9-10), separating bands with extra space.
+-- Success (9-10), separating bands with extra space, and colours each
+-- threshold cell by whether the player's current bonus passes it.
 local function render_spellcheck(rows)
   if not rows or #rows == 0 then return end
 
@@ -243,17 +317,7 @@ local function render_spellcheck(rows)
     end
   end
 
-  local function num_cell(n) return string.format("%" .. num_w .. "s", n or "") end
-  local function band(start_i, end_i, nums)
-    local parts = {}
-    for i = start_i, end_i do
-      table.insert(parts, num_cell(nums[i]))
-    end
-    return table.concat(parts, " ")
-  end
-
-  -- Group widths for header band labels (Fail / Maybe / Success).
-  local fail_w    = 4 * num_w + 3   -- 4 cells, 3 gaps
+  local fail_w    = 4 * num_w + 3   -- 4 cells, 3 gaps (1 char each)
   local maybe_w   = 4 * num_w + 3
   local success_w = 2 * num_w + 1
 
@@ -269,92 +333,123 @@ local function render_spellcheck(rows)
     end
   end
 
-  mud.note("  Spellcheck:", SC_HEADER_STYLE)
-
-  -- Column geometry:
-  --   * Inter-column gap is a uniform 2 spaces everywhere (in both the
-  --     header and the data rows). This keeps the right edge of every
-  --     header label aligned with the right edge of every data cell, so
-  --     "Chance" / "Level" / "Bonus" line up cleanly with their values.
-  --   * Band labels "Fail" and "Maybe" sit one column right of their
-  --     band's left edge so they land over the first *digit* of the
-  --     band's first cell (each number cell is right-justified within
-  --     `num_w` and starts with a pad space). We accomplish that by
-  --     prepending a literal space INSIDE the label string before
-  --     passing it to `%-Ns`. The third band label is the verb form
-  --     "Succeed" (mnemonic for "what bonus succeeds at this stage")
-  --     and is *right*-aligned in its field instead — its "d" lands
-  --     under the rightmost digit of the band's last cell, which is
-  --     the maximum-success-chance bonus.
-  --   * Skill-aware trailing columns use widths sized to their worst-
-  --     case content. The Hint column is right-aligned across the board
-  --     (header + every value) — the bonus delta varies between 2 and
-  --     3 digits ("+92b for 10%" vs "+117b for 10%"), and right-aligning
-  --     keeps the trailing "%" / "x" of every row landing under the "t"
-  --     of "Hint". Left-aligning instead left the "%" signs ragged.
+  -- Trailing column widths (skills-aware columns).
   local chance_w = 6   -- ">99%" / "<1%" / "100%" all fit; header "Chance" = 6
   local level_w  = 5   -- "Level"
   local bonus_w  = 5   -- "Bonus"
 
-  -- Pre-compute every row's chance/level/bonus/hint strings so we can
-  -- size the Hint column to the widest actual hint we'll print.
+  -- Pre-compute every row's per-cell views so we can:
+  --   (a) size the Hint column to the widest actual hint
+  --   (b) drive the per-threshold colouring in the row render loop
+  -- row_view.passed_seq[i] = (style, _) for threshold i — built once.
   local computed = {}
   local hint_w   = #"Hint"
   for _, r in ipairs(rows) do
     local row_view = { skill = r.skill, nums = r.nums }
+    local _level, bonus = nil, nil
     if show_skills_cols then
-      local level, bonus = skill_lookup(r.skill)
+      _level, bonus = skill_lookup(r.skill)
       if bonus then
         local passed, chance_label = compute_chance(bonus, r.nums)
-        row_view.chance  = chance_label
-        row_view.level_s = level and tostring(level) or "-"
-        row_view.bonus_s = tostring(bonus)
-        row_view.hint    = compute_hint(bonus, passed, r.nums)
+        row_view.passed   = passed
+        row_view.chance   = chance_label
+        row_view.level_s  = _level and tostring(_level) or "-"
+        row_view.bonus_s  = tostring(bonus)
+        row_view.hint     = compute_hint(bonus, passed, r.nums)
         if #row_view.hint > hint_w then hint_w = #row_view.hint end
-      else
-        row_view.chance, row_view.level_s, row_view.bonus_s, row_view.hint = "", "", "", ""
       end
     end
+    -- Per-threshold style sequence — built whether or not we have a
+    -- bonus, because position-tier fallback still wants per-cell colour
+    -- when no skills snapshot is available.
+    local styles = {}
+    local passed_last = false
+    for i = 1, #r.nums do
+      local style, new_pl = threshold_style(bonus, r.nums[i], passed_last, position_for(i))
+      styles[i]    = style
+      passed_last  = new_pl
+    end
+    row_view.cell_styles = styles
     computed[#computed + 1] = row_view
   end
 
-  if show_skills_cols then
-    -- "Hint" header is right-aligned (no `-` flag on the last %Ns) so
-    -- its "t" lands at the column's right edge — sitting over the
-    -- right-aligned "max" value and over the trailing "%" of the longer
-    -- "+Nb for X%" hints. "Succeed" is also right-aligned (its "d"
-    -- lands over the max-chance bonus); Fail / Maybe stay left-aligned
-    -- with a prepended space so they land over the first digit.
-    local header = string.format(
-      "    %-" .. skill_w .. "s  %-" .. fail_w .. "s  %-" .. maybe_w .. "s  %" .. success_w .. "s  %" .. chance_w .. "s  %" .. level_w .. "s  %" .. bonus_w .. "s  %" .. hint_w .. "s",
-      "Skill", " Fail", " Maybe", "Succeed", "Chance", "Level", "Bonus", "Hint")
-    mud.note(header, SC_COL_STYLE)
-  else
-    local header = string.format(
-      "    %-" .. skill_w .. "s  %-" .. fail_w .. "s  %-" .. maybe_w .. "s  %" .. success_w .. "s",
-      "Skill", " Fail", " Maybe", "Succeed")
-    mud.note(header, SC_COL_STYLE)
+  -- ---------- Spellcheck: heading ----------
+  mud.note(mud.span("  Spellcheck:", PALETTE.bold_label))
+
+  -- ---------- Header row ----------
+  -- Spans are constructed per region. Band labels are tier-coloured
+  -- (Fail red, Maybe yellow, Succeed green) — that gives the user an
+  -- at-a-glance legend for the cell colouring below. The leading space
+  -- inside " Fail" / " Maybe" lines them up over their band's first
+  -- digit (each band cell is right-justified within `num_w` and starts
+  -- with a pad space); "Succeed" is right-aligned in its field so its
+  -- "d" lands over the max-success-chance bonus (last cell of the
+  -- Success band).
+  do
+    local spans = {
+      mud.span(string.format("    %-" .. skill_w .. "s", "Skill"), PALETTE.col_header),
+      mud.span("  "),
+      mud.span(string.format("%-" .. fail_w  .. "s", " Fail"),    { fg = "light red",   bold = true }),
+      mud.span("  "),
+      mud.span(string.format("%-" .. maybe_w .. "s", " Maybe"),   { fg = "yellow",      bold = true }),
+      mud.span("  "),
+      mud.span(string.format("%"  .. success_w .. "s", "Succeed"), { fg = "light green", bold = true }),
+    }
+    if show_skills_cols then
+      table.insert(spans, mud.span("  "))
+      table.insert(spans, mud.span(string.format("%" .. chance_w .. "s", "Chance"), PALETTE.col_header))
+      table.insert(spans, mud.span("  "))
+      table.insert(spans, mud.span(string.format("%" .. level_w  .. "s", "Level"),  PALETTE.col_header))
+      table.insert(spans, mud.span("  "))
+      table.insert(spans, mud.span(string.format("%" .. bonus_w  .. "s", "Bonus"),  PALETTE.col_header))
+      table.insert(spans, mud.span("  "))
+      table.insert(spans, mud.span(string.format("%" .. hint_w   .. "s", "Hint"),   PALETTE.col_header))
+    end
+    mud.note(table.unpack(spans))
   end
 
+  -- ---------- Data rows ----------
   for _, rv in ipairs(computed) do
-    if show_skills_cols then
-      local row = string.format(
-        "    %-" .. skill_w .. "s  %s  %s  %s  %" .. chance_w .. "s  %" .. level_w .. "s  %" .. bonus_w .. "s  %" .. hint_w .. "s",
-        rv.skill,
-        band(1, 4,  rv.nums),
-        band(5, 8,  rv.nums),
-        band(9, 10, rv.nums),
-        rv.chance, rv.level_s, rv.bonus_s, rv.hint)
-      mud.note(row, SC_ROW_STYLE)
-    else
-      local row = string.format(
-        "    %-" .. skill_w .. "s  %s  %s  %s",
-        rv.skill,
-        band(1, 4,  rv.nums),
-        band(5, 8,  rv.nums),
-        band(9, 10, rv.nums))
-      mud.note(row, SC_ROW_STYLE)
+    local spans = {
+      mud.span(string.format("    %-" .. skill_w .. "s", rv.skill), PALETTE.skill_name),
+    }
+
+    -- Bands: emit each threshold cell as its own span, separated by
+    -- single-space gutters. Between bands (after cells 4 and 8) use a
+    -- double-space gutter to match the band-label widths above.
+    for i = 1, #rv.nums do
+      local pre
+      if     i == 1 then pre = "  "          -- after skill column
+      elseif i == 5 or i == 9 then pre = "  "  -- between bands
+      else  pre = " "                          -- within a band
+      end
+      table.insert(spans, mud.span(pre))
+      table.insert(spans, mud.span(string.format("%" .. num_w .. "s", rv.nums[i]), rv.cell_styles[i]))
     end
+
+    if show_skills_cols then
+      if rv.chance then
+        local ch_style = chance_style(rv.passed)
+        table.insert(spans, mud.span("  "))
+        table.insert(spans, mud.span(string.format("%" .. chance_w .. "s", rv.chance), ch_style))
+        table.insert(spans, mud.span("  "))
+        table.insert(spans, mud.span(string.format("%" .. level_w  .. "s", rv.level_s)))
+        table.insert(spans, mud.span("  "))
+        table.insert(spans, mud.span(string.format("%" .. bonus_w  .. "s", rv.bonus_s)))
+        table.insert(spans, mud.span("  "))
+        -- Hint shares Chance's tier colour so the eye reads "this is where
+        -- the +Nb gets you". "max" gets the green-bold treatment.
+        local hint_style = (rv.hint == "max") and PALETTE.hint_max or ch_style
+        table.insert(spans, mud.span(string.format("%" .. hint_w .. "s", rv.hint), hint_style))
+      else
+        -- Skill not in the snapshot — leave the trailing cells blank so
+        -- the column grid stays aligned. We emit at least one space per
+        -- cell because mud.span rejects empty text.
+        local blank = string.rep(" ", chance_w + level_w + bonus_w + hint_w + 8)  -- 4 inter-cell gutters
+        table.insert(spans, mud.span(blank))
+      end
+    end
+    mud.note(table.unpack(spans))
   end
 
   -- Footer hint when we don't have skills data: tell the user how to
@@ -367,56 +462,148 @@ local function render_spellcheck(rows)
   end
 end
 
--- Print one full info card. Per-line colour tiers compensate for the
--- lack of inline span styling in mud.note.
+-- Helper: a "field: value" line where the label is light-green and the
+-- value gets its own style. Single space between label and value.
+local function field_line(label, value, value_style)
+  mud.note(
+    mud.span("  " .. label .. ": ", PALETTE.label),
+    mud.span(value, value_style)
+  )
+end
+
+-- Split a components string into a span list, accenting each
+-- parenthetical (e.g. "(consumed)") in a brighter magenta so the eye
+-- catches which items are consumed by the cast. Anything outside parens
+-- is rendered in regular magenta.
+--
+-- Examples handled correctly:
+--   "a human heart (consumed)"
+--   "a quill (consumed), a lightable torch (consumed)"
+--   "none"               (just one magenta span)
+local function components_spans(components)
+  local out = {}
+  local pos = 1
+  while pos <= #components do
+    local open_p = components:find("%(", pos)
+    if not open_p then
+      table.insert(out, mud.span(components:sub(pos), PALETTE.comp_body))
+      break
+    end
+    if open_p > pos then
+      table.insert(out, mud.span(components:sub(pos, open_p - 1), PALETTE.comp_body))
+    end
+    local close_p = components:find("%)", open_p) or #components
+    table.insert(out, mud.span(components:sub(open_p, close_p), PALETTE.comp_paren))
+    pos = close_p + 1
+  end
+  return out
+end
+
+-- Print one full info card. Per-region styling via mud.span — each line
+-- mixes a light-green label with a value coloured by what it represents.
 local function show_card(s)
-  -- Header: NAME (nick)  — bold + underlined + type-coloured. The
-  -- underline acts as the visual rule between the spell title and the
-  -- rest of the card; we copy the base type-tier style so the bold
-  -- flag from `style_for()` carries through.
-  local header_style = { underline = true }
-  for k, v in pairs(style_for(s.type)) do header_style[k] = v end
-  mud.note(s.name .. " (" .. s.nick .. ")", header_style)
-  -- Description: same tier as the header but italicised so it reads as
-  -- subtitle rather than a duplicate header.
+  local type_style = style_for(s.type)
+
+  -- Header: spell name (type-tier + bold + underline) + " (nick)" suffix
+  -- (type-tier, no bold/underline, so the nick reads as quieter metadata
+  -- next to the title). Build the suffix style by copying the type tier
+  -- and stripping the prominence flags.
+  local name_style = {}
+  for k, v in pairs(type_style) do name_style[k] = v end
+  name_style.bold = true
+  name_style.underline = true
+  local nick_style = {}
+  for k, v in pairs(type_style) do nick_style[k] = v end
+  nick_style.bold = nil
+  mud.note(
+    mud.span(s.name, name_style),
+    mud.span(" (" .. s.nick .. ")", nick_style)
+  )
+
+  -- Description in type-tier + italic. tt_dw renders the description in
+  -- the same colour family as the spell name; italic differentiates it
+  -- from the heading without changing colour.
   if s.description and s.description ~= "" then
     local desc_style = {}
-    for k, v in pairs(style_for(s.type)) do desc_style[k] = v end
+    for k, v in pairs(type_style) do desc_style[k] = v end
     desc_style.bold = nil
     desc_style.italic = true
-    mud.note("  " .. s.description, desc_style)
+    mud.note(mud.span("  " .. s.description, desc_style))
   end
-  -- Stats line: Type / Gp / Size on one line. tt_dw shows these as
-  -- separate "field: value" pairs in two colours; we collapse to a
-  -- single light-green metadata line.
-  mud.note(string.format("  Type: %s   Gp: %s   Size: %s",
-    s.type or "?", s.gp or "?", s.size or "?"), LABEL_STYLE)
+
+  -- Stats line: Type / Gp / Size — three "label: value" pairs in one
+  -- visual row. Labels are light-green; values are default-coloured so
+  -- they stand out against the metadata band.
+  mud.note(
+    mud.span("  Type: ",  PALETTE.label),
+    mud.span(s.type or "?"),
+    mud.span("   Gp: ",   PALETTE.label),
+    mud.span(s.gp   or "?"),
+    mud.span("   Size: ", PALETTE.label),
+    mud.span(s.size or "?")
+  )
+
+  -- Components: label green, item body magenta, "(consumed)" parens in
+  -- brighter magenta + bold. We build the value-side spans first then
+  -- prepend the label span.
   if s.components and s.components ~= "" then
-    mud.note("  Components: " .. s.components, LABEL_STYLE)
+    local spans = { mud.span("  Components: ", PALETTE.label) }
+    for _, sp in ipairs(components_spans(s.components)) do
+      table.insert(spans, sp)
+    end
+    mud.note(table.unpack(spans))
   end
+
   if s.octogram == "yes" then
-    mud.note("  Requires: an octogram", LABEL_STYLE)
+    field_line("Requires", "an octogram", { fg = "magenta" })
   end
+
   if s.tome and s.tome ~= "" then
-    -- Tome gets its own colour because tt_dw renders it as a clickable
-    -- linkified element; underlined yellow is the closest static
-    -- approximation.
-    mud.note("  Tome: " .. s.tome, TOME_STYLE)
+    field_line("Tome", s.tome, PALETTE.tome)
   end
+
   if s.learnt_at and s.learnt_at ~= "" then
-    mud.note("  Learnt at: level " .. s.learnt_at, LABEL_STYLE)
+    -- "level N" — show the number in bold for quick scan.
+    mud.note(
+      mud.span("  Learnt at: ", PALETTE.label),
+      mud.span("level ",        PALETTE.label),
+      mud.span(s.learnt_at,     { bold = true })
+    )
   end
+
   if s.notes and s.notes ~= "" then
-    mud.note("  Notes: " .. s.notes, LABEL_STYLE)
+    field_line("Notes", s.notes)
   end
+
   render_spellcheck(s.spellcheck)
 end
 
 -- Summary line for the multi-match path. One-liner per spell, type-coloured.
+-- One-line summary in match lists. The nickname is clickable — clicking
+-- it drills into the full info card (same as typing /spell <nick>). We
+-- underline the nickname to signal it's interactive, but ONLY the nick
+-- text itself — the trailing padding gets its own un-styled span so the
+-- underline doesn't extend across empty space (and the clickable region
+-- doesn't extend through it either).
+local SUMMARY_NICK_W = 7
 local function show_summary_row(nick)
   local s = spells[nick]
   local style = style_for(s.type)
-  mud.note(string.format("  %-7s %s", s.nick, s.name), style)
+  local click_style = {}
+  for k, v in pairs(style) do click_style[k] = v end
+  click_style.underline = true
+  click_style.on_click = function() show_card(s) end
+  local pad = SUMMARY_NICK_W - #s.nick
+  local spans = {
+    mud.span("  "),
+    mud.span(s.nick, click_style),
+  }
+  if pad > 0 then
+    table.insert(spans, mud.span(string.rep(" ", pad)))
+  end
+  table.insert(spans, mud.span(" "))
+  table.insert(spans, mud.span(s.name, style))
+  mud.note(table.unpack(spans))
 end
 
 -- ---------------------------------------------------------------------
@@ -477,15 +664,30 @@ local function show_list()
 
       -- Column-major layout: read the first column top-to-bottom, then
       -- the next, etc. Easier to skim alphabetically than row-major.
+      -- Each nick is wrapped in its own span with on_click so clicking
+      -- the nick drills into the full info card; the underline cue is
+      -- attached to the nick text ONLY, not the trailing pad — emitting
+      -- the pad as a separate un-styled span keeps the link region (and
+      -- the underline) tight to the actual word.
+      local type_style = style_for(t)
       for r = 1, rows do
-        local parts = {}
+        local spans = { mud.span("  ") }
         for c = 0, per_row - 1 do
           local idx = c * rows + r
           if idx <= n then
-            table.insert(parts, string.format("%-" .. cell_w .. "s", nicks[idx]))
+            local nick = nicks[idx]
+            local click_style = {}
+            for k, v in pairs(type_style) do click_style[k] = v end
+            click_style.underline = true
+            click_style.on_click = function() show_card(spells[nick]) end
+            table.insert(spans, mud.span(nick, click_style))
+            local pad = cell_w - #nick
+            if pad > 0 then
+              table.insert(spans, mud.span(string.rep(" ", pad)))
+            end
           end
         end
-        mud.note("  " .. table.concat(parts), style_for(t))
+        mud.note(table.unpack(spans))
       end
     end
   end
