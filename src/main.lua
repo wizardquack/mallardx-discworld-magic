@@ -722,3 +722,10 @@ require("protection_report")
 -- warnings, and necromancy-circle activation. See src/high.lua header
 -- for the full rationale + skipped-rule list.
 require("high")
+
+-- `/spell` lookup command — ported subset of tt_dw's /spell. Baked spell
+-- data lives in src/spelldata.lua; command surface + formatting lives in
+-- src/spell.lua. v1 covers nickname / name / description lookups and a
+-- type-grouped multi-column list view; TM/spellcheck path is deferred
+-- (it needs the player's skill levels, which aren't in scope here).
+require("spell")
