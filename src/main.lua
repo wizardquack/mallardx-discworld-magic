@@ -368,7 +368,16 @@ mud.style([[.+ the giant fruitbat .* (?:hungrily|peckish|hungry|anxiously)\.$]],
 --
 -- State (Lua locals — scoped to this plugin's sandbox):
 --   eff_item    = item currently floating around you (""=none)
---   eff_state   = "up" | "down" | "" (empty until first event)
+--   eff_state   = "up" | "down" | "unknown" | ""
+--                 "unknown" is the post-connect default: the floater may have
+--                 carried over from a prior session, but we haven't seen any
+--                 wire signal yet to confirm. The clatters trigger fires
+--                 drop_eff in this state so a server-side-persisted floater
+--                 dropping before any up event still alerts. "" is the
+--                 explicitly-cleared state set by the "Arcane protection
+--                 status:" header — after that line we trust the follow-up
+--                 status entries to repopulate, so clatters does NOT fire in
+--                 "" state (avoids false positives mid-protections output).
 --   eff_silent  = next "chain falls" message was self-inflicted; suppress alarm.
 --
 -- Cross-plugin events emitted on every state transition:
@@ -385,7 +394,7 @@ mud.style([[.+ the giant fruitbat .* (?:hungrily|peckish|hungry|anxiously)\.$]],
 -- it as an unexpected event.
 
 local eff_item    = ""
-local eff_state   = ""
+local eff_state   = "unknown"
 local eff_silent  = false
 
 local function set_eff(item)
@@ -475,11 +484,16 @@ mud.trigger([[^The chain scores a direct hit and falls to the ground!$]], functi
 end)
 
 -- Generic "your floater item just hit the ground" — unexpected death.
--- Only fires the alarm when the falling item matches the tracked eff.
--- Named items (e.g. "Steelwing") print without a leading article; common
--- items print with "A "/"An "/"The ".
+-- Fires the alarm when the falling item matches the tracked eff, OR when
+-- state is "unknown" (post-connect, no observed up/down event yet — a
+-- session-carryover floater dropping in this window would otherwise be
+-- silently missed; accept the false-positive risk on unrelated clattering
+-- items in this narrow window). Named items (e.g. "Steelwing") print
+-- without a leading article; common items print with "A "/"An "/"The ".
 mud.trigger([[^(?:A |An |The )?(.+) clatters to the ground\.$]], function(m)
   if eff_item ~= "" and m[1] == eff_item then
+    drop_eff()
+  elseif eff_state == "unknown" then
     drop_eff()
   end
 end)
