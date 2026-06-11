@@ -403,9 +403,14 @@ local function drop_eff()
   mud.note("***",                  { fg = "magenta", bold = true })
   mud.note("*** Floater down! ***",{ fg = "magenta", bold = true })
   mud.note("***",                  { fg = "magenta", bold = true })
-  ui.notify("Floater down!",
-    (eff_item ~= "") and ("Your " .. eff_item .. " hit the ground.") or "Your floater hit the ground.",
-    { icon = "warning" })
+  if settings.get("eff_drop_notify") then
+    ui.notify("Floater down!",
+      (eff_item ~= "") and ("Your " .. eff_item .. " hit the ground.") or "Your floater hit the ground.",
+      { icon = "warning" })
+  end
+  if settings.get("eff_drop_sound") then
+    mud.play_sound("mallard:ding-ding-low")
+  end
   events.emit("net.mallard.discworld.shield.down", {
     subject = "self",
     type    = "eff",

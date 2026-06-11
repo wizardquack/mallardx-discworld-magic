@@ -15,3 +15,15 @@ sends = true
 
 [worlds]
 match = ["discworld.starturtle.net:*"]
+
+[settings.eff_drop_notify]
+type = "bool"
+default = true
+label = "Floater-down system notification"
+description = "Show a system notification when your Endorphin's Floating Friend (EFF) drops."
+
+[settings.eff_drop_sound]
+type = "bool"
+default = false
+label = "Floater-down sound"
+description = "Play the mallard:ding-ding-low chime when your EFF drops."
