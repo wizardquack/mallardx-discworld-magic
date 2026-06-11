@@ -418,8 +418,10 @@ end
 mud.style([[^In blocking the attack]], { fg = "red", bold = true })
 
 -- Floater begins orbiting (your own cast). Named items (e.g. "Steelwing")
--- print without a leading article, so `The ` is optional.
-mud.trigger([[^(?:The )?(.+) begins to float around you\.$]], function(m)
+-- print without a leading article; common items print with "A "/"An "/"The ".
+-- Strip the article so eff_item stays comparable with the drop trigger,
+-- which also strips it.
+mud.trigger([[^(?:A |An |The )?(.+) begins to float around you\.$]], function(m)
   set_eff(m[1])
 end)
 
@@ -430,8 +432,9 @@ mud.trigger([[floating around you is knocked out of orbit\.$]], drop_eff)
 mud.trigger([[^You realise that (.+) is no longer floating around you\.$]], drop_eff)
 
 -- Status report line: " * <item> is floating around you:" (eff or
--- protections command). Initialises state on session resume.
-mud.trigger([[^ \* (.+) is floating around you:$]], function(m)
+-- protections command). Initialises state on session resume. Strip the
+-- article so eff_item matches the drop-trigger capture.
+mud.trigger([[^ \* (?:A |An |The )?(.+) is floating around you:$]], function(m)
   set_eff(m[1])
 end)
 
@@ -468,8 +471,9 @@ end)
 
 -- Generic "your floater item just hit the ground" — unexpected death.
 -- Only fires the alarm when the falling item matches the tracked eff.
--- Named items (e.g. "Steelwing") print without a leading article.
-mud.trigger([[^(?:A )?(.+) clatters to the ground\.$]], function(m)
+-- Named items (e.g. "Steelwing") print without a leading article; common
+-- items print with "A "/"An "/"The ".
+mud.trigger([[^(?:A |An |The )?(.+) clatters to the ground\.$]], function(m)
   if eff_item ~= "" and m[1] == eff_item then
     drop_eff()
   end
