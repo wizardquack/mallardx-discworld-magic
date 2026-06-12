@@ -378,7 +378,11 @@ mud.style([[.+ the giant fruitbat .* (?:hungrily|peckish|hungry|anxiously)\.$]],
 --                 status:" header — after that line we trust the follow-up
 --                 status entries to repopulate, so clatters does NOT fire in
 --                 "" state (avoids false positives mid-protections output).
---   eff_silent  = next "chain falls" message was self-inflicted; suppress alarm.
+--   eff_silent  = chain counterwise dance is in progress; suppress alarm on
+--                 both the "direct hit" line AND the follow-up "clatters" line
+--                 (the latter would otherwise fire drop_eff via the item-match
+--                 branch and defeat the silent intent). Cleared by the clatters
+--                 trigger at the end of the dance sequence.
 --
 -- Cross-plugin events emitted on every state transition:
 --   net.mallard.discworld.shield.up   { subject = "self", type = "eff", item = "<floater>" }
@@ -465,7 +469,7 @@ mud.trigger([[^Arcane protection status:$]], function()
 end)
 
 -- Chain counterwise-orbit dance: intentionally takes the floater down.
--- The follow-up "direct hit" message should NOT trigger the alarm.
+-- The follow-up "direct hit" AND "clatters" lines should both stay silent.
 mud.trigger([[^You send the chain into a counterwise orbit around you\.$]], function()
   eff_silent = true
 end)
@@ -473,7 +477,8 @@ end)
 mud.trigger([[^The chain scores a direct hit and falls to the ground!$]], function()
   if eff_silent then
     eff_state  = "down"
-    eff_silent = false
+    -- eff_silent left set; the clatters handler clears it after suppressing
+    -- the item-match branch (which would otherwise fire the alarm).
     -- Silent flag tells consumers (vitals) to update state without alarming.
     events.emit("net.mallard.discworld.shield.down", {
       subject = "self",
@@ -488,9 +493,15 @@ end)
 -- state is "unknown" (post-connect, no observed up/down event yet — a
 -- session-carryover floater dropping in this window would otherwise be
 -- silently missed; accept the false-positive risk on unrelated clattering
--- items in this narrow window). Named items (e.g. "Steelwing") print
--- without a leading article; common items print with "A "/"An "/"The ".
+-- items in this narrow window). When eff_silent is set we're mid chain
+-- counterwise dance: skip the alarm and clear the flag. Named items
+-- (e.g. "Steelwing") print without a leading article; common items print
+-- with "A "/"An "/"The ".
 mud.trigger([[^(?:A |An |The )?(.+) clatters to the ground\.$]], function(m)
+  if eff_silent then
+    eff_silent = false
+    return
+  end
   if eff_item ~= "" and m[1] == eff_item then
     drop_eff()
   elseif eff_state == "unknown" then
