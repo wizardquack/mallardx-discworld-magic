@@ -17,10 +17,10 @@
 -- and don't carry the player name. To attribute them we hold the
 -- player name from the most recent header line in `current_target`.
 -- The per-type self modules (`tpa.lua`, `ccc.lua`, `bug.lua`, `ms.lua`,
--- and `main.lua`'s EFF section) already handle the SELF body lines via
--- the established `Arcane protection status:` reset hook + the
--- `* You/Your ...` triggers; this module covers OTHER players that the
--- single-player paths can't reach.
+-- `eff.lua`) already handle the SELF body lines via the established
+-- `Arcane protection status:` reset hook + the `* You/Your ...`
+-- triggers; this module covers OTHER players that the single-player
+-- paths can't reach.
 --
 -- Events emitted:
 --   net.mallard.discworld.shield.cleared { subject }
