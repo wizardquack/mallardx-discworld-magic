@@ -56,3 +56,8 @@ Consumers today:
   drives the EFF indicator + TPA stat cells.
 - `discworld-grouping` — self + other; drives the five-pill shield row
   per group member.
+
+## Credit
+
+Many thanks to Quow and Oki, whose work on similar plugins was
+invaluable in designing and building this one.
