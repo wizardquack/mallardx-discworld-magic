@@ -82,7 +82,12 @@ end
 -- Headers — set current_target, emit shield.cleared.
 -- ---------------------------------------------------------------------
 
-mud.trigger(string.format([[^Arcane protection for (%s):-$]], NAME),
+-- Player blocks end the header with `:-`; non-player targets (e.g. the
+-- user's horse via `mhas`) end with a bare `:`. Accept either so
+-- `current_target` rotates on every header — otherwise the body lines
+-- under a bare-colon header inherit the previous block's subject and
+-- light up chips on the wrong roster row.
+mud.trigger(string.format([[^Arcane protection for (%s):-?$]], NAME),
   function(m)
     current_target = m[1] or ""
     clear(current_target)
