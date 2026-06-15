@@ -757,16 +757,14 @@ end
 -- non-capturing space-and-arg group lets the no-arg form fall through
 -- to the list view.
 
--- The `\s+` between `/spell` and the captured argument is load-bearing:
--- it forces a word boundary so `/spells` (the natural pluralisation a
--- user might type) does NOT match this alias as `/spell` + "s". The
--- optional outer group still lets the bare `/spell` form trigger the
--- list view. Trailing whitespace is tolerated.
-mud.alias([[^/spell(?:\s+(.*?))?\s*$]], function(m)
-  local arg = m[1] or ""
+-- `mud.command` matches on the exact name `spell`, so the natural
+-- pluralisation `/spells` no longer collides — only `/spell` (with
+-- optional whitespace-delimited args) dispatches here.
+mud.command("spell", function(m)
+  local arg = m.args
   if arg == "" then
     dispatch(nil)
   else
     dispatch(arg)
   end
-end, { name = "spell" })
+end)
