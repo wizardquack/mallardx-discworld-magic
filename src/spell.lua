@@ -767,4 +767,7 @@ mud.command("spell", function(m)
   else
     dispatch(arg)
   end
-end)
+end, {
+  description = "Cast or browse known spells.",
+  usage = "spell [name|subcommand]",
+})
