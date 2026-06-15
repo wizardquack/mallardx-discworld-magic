@@ -768,6 +768,6 @@ mud.command("spell", function(m)
     dispatch(arg)
   end
 end, {
-  description = "Cast or browse known spells.",
-  usage = "spell [name|subcommand]",
+  description = "Show information about a spell: source, components, and skill requirements.",
+  usage = "spell — list all known spells; spell <query> — match by name, acronym, description, or skill; spell help — usage examples.",
 })
