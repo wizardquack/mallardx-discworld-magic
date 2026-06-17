@@ -23,11 +23,27 @@
 -- paths can't reach.
 --
 -- Events emitted:
---   net.mallard.discworld.shield.cleared { subject }
---       Fired on every header (`Arcane protection for X:-`) and on every
---       "X has no arcane or divine protection." line. Grouping plugin
---       handler wipes all five cells for that subject. No banner /
---       notification path consumes this — only the chip grid.
+--   net.mallard.discworld.shield.cleared { subject, target_kind }
+--       Fired on every header (`Arcane protection for X:` and the
+--       `:-` variant) and on every "X has no arcane or divine
+--       protection." line. Grouping plugin handler wipes all five
+--       cells for that subject.
+--
+--       target_kind tags the source of the event:
+--         "group" — a per-member block inside `group shields` /
+--                   `protections X` output (header ends with `:-`, or
+--                   the "X has no arcane or divine protection." tail
+--                   inside the same report).
+--         "other" — a non-player target's protection block (header
+--                   ends with a bare `:`, e.g. the user's horse via
+--                   `mhas`).
+--         "self"  — the bare-`shields` no-protection response ("You
+--                   do not have any arcane or divine protection."),
+--                   which is a standalone self check rather than part
+--                   of a group/other report.
+--       Consumers that maintain a group roster should only auto-add
+--       roster rows when target_kind == "group". Subscribers that
+--       don't care can ignore the field.
 --   net.mallard.discworld.shield.up { subject, type, … }
 --       Mirrors the events emitted by the live-cast modules (tpa.lua,
 --       ccc.lua, …); the payload shape is identical so grouping's
@@ -66,9 +82,12 @@ local TPA_PERCENT = {
 
 local current_target = ""
 
-local function clear(subject)
+local function clear(subject, target_kind)
   if type(subject) ~= "string" or subject == "" then return end
-  events.emit("net.mallard.discworld.shield.cleared", { subject = subject })
+  events.emit("net.mallard.discworld.shield.cleared", {
+    subject     = subject,
+    target_kind = target_kind,
+  })
 end
 
 local function up(type_, details)
@@ -83,14 +102,22 @@ end
 -- ---------------------------------------------------------------------
 
 -- Player blocks end the header with `:-`; non-player targets (e.g. the
--- user's horse via `mhas`) end with a bare `:`. Accept either so
--- `current_target` rotates on every header — otherwise the body lines
--- under a bare-colon header inherit the previous block's subject and
--- light up chips on the wrong roster row.
-mud.trigger(string.format([[^Arcane protection for (%s):-?$]], NAME),
+-- user's horse via `mhas`) end with a bare `:`. Register them
+-- separately so we can tag the emitted `shield.cleared` event with the
+-- target kind — downstream consumers (the grouping plugin's roster)
+-- use the tag to decide whether to auto-add a roster row. Both
+-- triggers still rotate `current_target` so body lines attribute
+-- correctly regardless of header form.
+mud.trigger(string.format([[^Arcane protection for (%s):-$]], NAME),
   function(m)
     current_target = m[1] or ""
-    clear(current_target)
+    clear(current_target, "group")
+  end)
+
+mud.trigger(string.format([[^Arcane protection for (%s):$]], NAME),
+  function(m)
+    current_target = m[1] or ""
+    clear(current_target, "other")
   end)
 
 -- "X has no arcane (or divine) protection." — terminal line for an
@@ -100,7 +127,7 @@ mud.trigger(string.format(
   [[^(%s) has no arcane(?: or divine)? protection\.$]], NAME),
   function(m)
     local subject = m[1] or ""
-    clear(subject)
+    clear(subject, "group")
     current_target = ""
   end)
 
@@ -110,7 +137,10 @@ mud.trigger(string.format(
 -- here so the chips drop the moment the user confirms nothing's up.
 mud.trigger([[^You do not have any arcane(?: or divine)? protection\.$]],
   function()
-    events.emit("net.mallard.discworld.shield.cleared", { subject = "self" })
+    events.emit("net.mallard.discworld.shield.cleared", {
+      subject     = "self",
+      target_kind = "self",
+    })
   end)
 
 -- ---------------------------------------------------------------------
