@@ -1,6 +1,6 @@
 id = "net.mallard.discworld-magic"
 name = "Discworld Magic"
-version = "0.6.2"
+version = "0.7.0"
 description = "Magic highlights and inline annotations in game output, as well as some helper commands."
 language = "lua"
 entry = "src/main.lua"
