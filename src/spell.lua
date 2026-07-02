@@ -770,4 +770,7 @@ mud.command("spell", function(m)
 end, {
   description = "Show information about a spell: source, components, and skill requirements.",
   usage = "spell — list all known spells; spell <query> — match by name, acronym, description, or skill; spell help — usage examples.",
+  -- `/sp` shortcut. Ignored by Mallard < 0.15 (unknown opts keys are silently
+  -- dropped), so this stays backward-compatible without a minimum_app_version bump.
+  aliases = "sp",
 })
