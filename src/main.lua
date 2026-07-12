@@ -135,6 +135,18 @@ mud.replace([[^( large orb of energy)( is tracing a .+? pattern)$]],
 mud.replace([[^( substantial sphere of energy)( is tracing a .+? pattern)$]],
   "%1 (40-60)%2", { fg = "cyan" })
 
+-- Klein-bottle charge feedback — the bottle holds a limited number of
+-- captured spells and reports its state with these deliberately vague
+-- lines: the two "gain" phrases confirm the current charge level (green),
+-- while the "forgotten something" line fires when it's full and the
+-- oldest charge is quietly shed (yellow loss warning).
+mud.replace([[^Your mind races with new and exciting ideas\.$]],
+  "%0 (klein bottle +2)", { fg = "green" })
+mud.replace([[^You sense unimagined possibilities\.$]],
+  "%0 (klein bottle +1)", { fg = "green" })
+mud.replace([[^You get the feeling you've just forgotten something\.$]],
+  "%0 (klein bottle +2 -> +1)", { fg = "yellow" })
+
 -- ---------------------------------------------------------------------
 -- === eha.tin — Earhammer damage % ===
 -- ---------------------------------------------------------------------
