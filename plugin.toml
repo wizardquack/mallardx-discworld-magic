@@ -27,3 +27,9 @@ type = "bool"
 default = false
 label = "Floater-down sound"
 description = "Play the mallard:ding-ding-low chime when your EFF drops."
+
+[settings.jpct_create_sound]
+type = "bool"
+default = false
+label = "Portal-created sound"
+description = "Play the mallard:ding-ding-high chime when a JPCT portal solidifies."

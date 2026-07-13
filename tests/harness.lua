@@ -28,8 +28,9 @@ package.path = "./src/?.lua;./tests/?.lua;" .. package.path
 
 -- Default settings (a manifest-aware mock — tests can override before load).
 local DEFAULT_SETTINGS = {
-  eff_drop_notify = true,
-  eff_drop_sound  = true,
+  eff_drop_notify   = true,
+  eff_drop_sound    = true,
+  jpct_create_sound = true,
 }
 
 local function copy(t)
@@ -45,6 +46,7 @@ function M.reset()
   M.notes    = {}
   M.notifies = {}
   M.sounds   = {}
+  M.commands = {}
   M.emits    = {}
   M.event_listeners = {}
   M.settings = copy(DEFAULT_SETTINGS)
@@ -57,6 +59,7 @@ function M.reset()
     play_sound = function(name, opts)        table.insert(M.sounds,   { name = name, opts = opts }) end,
     replace    = function() end,
     send       = function() end,
+    command    = function(name, callback) table.insert(M.commands, { name = name, callback = callback }) end,
   }
   _G.events = {
     emit = function(name, data) table.insert(M.emits, { name = name, data = data }) end,

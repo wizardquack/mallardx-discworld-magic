@@ -264,6 +264,14 @@ mud.style([[^A .+ solidifies with a satisfying thump\.$]],          { fg = "gree
 mud.style([[^The portal disappears with a small clap of thunder\.$]], { fg = "red" })
 mud.style([[^.+ disappears with a small pop of inrushing air\.$]],    { fg = "red" })
 
+-- Optional audio cue when a JPCT portal solidifies (setting-gated,
+-- mirrors the eff_drop_sound pattern in src/eff.lua).
+mud.trigger([[.* solidifies with a satisfying thump\.]], function()
+  if settings.get("jpct_create_sound") then
+    mud.play_sound("mallard:ding-ding-high")
+  end
+end)
+
 -- EHA2 — hyaline amulet melt feedback
 mud.style([[^Your delicate hyaline amulet.*melts away]],                                 { fg = "cyan", bold = true })
 
