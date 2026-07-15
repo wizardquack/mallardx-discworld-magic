@@ -98,6 +98,12 @@ end
 -- current accumulated-energy level. The "%*" before "energy" matches any
 -- energy-type word (e.g. "magical", "etheric").
 --
+-- These lines are embedded mid-sentence in the bottle's look description,
+-- so each pattern is anchored ^(.*)(phrase)(.*)$ and the prefix/suffix
+-- captures are re-emitted around the annotation. Without that, mud.replace's
+-- whole-line target drops the un-matched head and tail of the line (see the
+-- pfg.tin note below). The (.*) guards are no-ops when the phrase is alone.
+--
 -- The five "tracing a %* pattern" subs *both* (a) insert a thaum-count
 -- annotation after the sphere-size phrase and (b) recolour the pattern
 -- name via @color_code{%1}. v1 Mallard can't replicate the dynamic
@@ -107,17 +113,17 @@ end
 -- spans don't carry the restyle and byte ranges aren't re-mapped
 -- across mods. We ship the count annotation only.
 
-mud.replace([[barely noticeable wisp of .* energy]],      "%0 (5-25)",                                                      { fg = "cyan" })
-mud.replace([[a tiny swirl of .* energy]],                 "%0 (30-55)",                                                     { fg = "cyan" })
-mud.replace([[ripple of .* energy]],                       "%0 (60-85)",                                                     { fg = "cyan" })
-mud.replace([[small waves of .* energy]],                  "%0 (90-115 (+1))",                                               { fg = "green" })
-mud.replace([[eddying currents of .* energy]],             "%0 (120-145 (+1))",                                              { fg = "green" })
-mud.replace([[a turbulence of .* energy]],                 "%0 (150-175 (+1))",                                              { fg = "green" })
-mud.replace([[a whirlpool of .* energy]],                  "%0 (180-205 (+1))",                                              { fg = "green" })
-mud.replace([[a maelstrom of .* energy]],                  "%0 (210-235 (+1))",                                              { fg = "green" })
-mud.replace([[a tempest of .* energy]],                    "%0 (240-265 (+2); Don't capture any more substantial spheres, smaller is still ok though.)", { fg = "yellow" })
-mud.replace([[a vortex of .* energy]],                     "%0 (270-295 (+2); Please to be refraining from capturing any more spells, or KLABOOMIE might ensue.)", { fg = "light red" })
-mud.replace([[an impossible chaos of .* energy]],          "%0 (300+; STOP CAPTURING SPELLS, YOU LUNATIC!)",                 { fg = "light red" })
+mud.replace([[^(.*)(barely noticeable wisp of .* energy)(.*)$]], "%1%2 (5-25)%3",          { fg = "cyan" })
+mud.replace([[^(.*)(a tiny swirl of .* energy)(.*)$]],           "%1%2 (30-55)%3",         { fg = "cyan" })
+mud.replace([[^(.*)(ripple of .* energy)(.*)$]],                 "%1%2 (60-85)%3",         { fg = "cyan" })
+mud.replace([[^(.*)(small waves of .* energy)(.*)$]],            "%1%2 (90-115 (+1))%3",   { fg = "green" })
+mud.replace([[^(.*)(eddying currents of .* energy)(.*)$]],       "%1%2 (120-145 (+1))%3",  { fg = "green" })
+mud.replace([[^(.*)(a turbulence of .* energy)(.*)$]],           "%1%2 (150-175 (+1))%3",  { fg = "green" })
+mud.replace([[^(.*)(a whirlpool of .* energy)(.*)$]],            "%1%2 (180-205 (+1))%3",  { fg = "green" })
+mud.replace([[^(.*)(a maelstrom of .* energy)(.*)$]],            "%1%2 (210-235 (+1))%3",  { fg = "green" })
+mud.replace([[^(.*)(a tempest of .* energy)(.*)$]],              "%1%2 (240-265 (+2); Don't capture any more substantial spheres, smaller is still ok though.)%3", { fg = "yellow" })
+mud.replace([[^(.*)(a vortex of .* energy)(.*)$]],               "%1%2 (270-295 (+2); Don't capture any more spells.)%3", { fg = "light red" })
+mud.replace([[^(.*)(an impossible chaos of .* energy)(.*)$]],    "%1%2 (300+ (+2); STOP CAPTURING SPELLS!)%3", { fg = "light red" })
 
 -- "tracing a %* pattern" subs — insert thaum-count annotation after
 -- the sphere-size phrase (see header comment for the pattern-name
