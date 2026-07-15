@@ -147,11 +147,16 @@ mud.replace([[^( substantial sphere of energy)( is tracing a .+? pattern)$]],
 -- while the "forgotten something" line fires when it's full and the
 -- oldest charge is quietly shed (yellow loss warning).
 mud.replace([[^Your mind races with new and exciting ideas\.$]],
-  "%0 (klein bottle +2)", { fg = "green" })
+  "%0 (klein: +2 int)", { fg = "green" })
 mud.replace([[^You sense unimagined possibilities\.$]],
-  "%0 (klein bottle +1)", { fg = "green" })
+  "%0 (klein: +1 int)", { fg = "green" })
 mud.replace([[^You get the feeling you've just forgotten something\.$]],
-  "%0 (klein bottle +2 -> +1)", { fg = "yellow" })
+  "%0 (klein: +2 -> +1 int)", { fg = "yellow" })
+
+-- wgs — constitution boost feedback. The cast confirms with a single
+-- line; annotate the con gain range (green), matching the klein format.
+mud.replace([[^You feel vitality course through your veins\.$]],
+  "%0 (wgs: +1-3 con)", { fg = "green" })
 
 -- ---------------------------------------------------------------------
 -- === eha.tin — Earhammer damage % ===
