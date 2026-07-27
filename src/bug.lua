@@ -52,6 +52,8 @@
 local SIZES   = [[handful|cloud|small swarm|large swarm|vast swarm|plague]]
 local SPECIES = [[lacewings|stick insects|mayflies|praying mantids|butterflies|ladybirds|dragonflies|damselflies|moths|grasshoppers|winged termites|termites|sandflies|mosquitoes|gnats|crickets|flying ants|ants|locusts|horseflies|cicadas|bees|wasps|hornets|elephant beetles|assassin bugs]]
 
+local char_switch = require("char_switch")
+
 local bug_size       = ""
 local bug_bugs       = ""
 local bug_state      = ""
@@ -174,12 +176,17 @@ mud.trigger(string.format(
 -- ---------------------------------------------------------------------
 -- Same shared hook as tpa.lua / ccc.lua / main.lua's EFF reset.
 
-mud.trigger([[^Arcane protection status:$]], function()
+local function reset_bug_state()
   bug_size       = ""
   bug_bugs       = ""
   bug_state      = ""
   bug_started_at = nil
-end)
+end
+
+mud.trigger([[^Arcane protection status:$]], reset_bug_state)
+
+-- Drop stale cloud state on a character switch (`su`). See char_switch.lua.
+char_switch.on(reset_bug_state)
 
 -- ---------------------------------------------------------------------
 -- 5. Debug alias.

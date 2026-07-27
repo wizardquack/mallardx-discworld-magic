@@ -1,6 +1,6 @@
 id = "net.mallard.discworld-magic"
 name = "Discworld Magic"
-version = "0.9.0"
+version = "0.10.0"
 description = "Magic highlights and inline annotations in game output, as well as some helper commands."
 language = "lua"
 entry = "src/main.lua"
@@ -12,6 +12,15 @@ license = "MIT"
 [permissions]
 notifications = true
 sends = true
+# char.info: subscribe to detect character switches (`su`) so the shield
+# modules can drop the previous character's stale self-shield state. Magic
+# owns shield detection, so it's the source of truth for that reset.
+# "char.info.*" backs gmcp.get() at load (self-heal on plugin reload —
+# gmcp.on doesn't replay past frames). See src/char_switch.lua.
+gmcp_access = ["char.info", "char.info.*"]
+
+[gmcp]
+advertise = ["char.info"]
 
 [worlds]
 match = ["discworld.starturtle.net:*"]

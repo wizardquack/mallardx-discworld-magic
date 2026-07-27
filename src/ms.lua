@@ -55,6 +55,8 @@
 local DEITIES = [[Pishe|Gufnork|Gapp|Sandelfon|Fish|Hat|Sek|Aegadon|Cubal|Reebox]]
 local VIA     = [[power|protective armour|grace]]
 
+local char_switch = require("char_switch")
+
 local ms_deity      = ""
 local ms_form       = ""
 local ms_via        = ""
@@ -165,14 +167,20 @@ mud.trigger([[^Your divine protection expires\.$]], drop_ms)
 -- ---------------------------------------------------------------------
 -- Same shared hook as the other shield modules.
 
-mud.trigger([[^Arcane protection status:$]], function()
+local function reset_ms_state()
   ms_deity      = ""
   ms_form       = ""
   ms_via        = ""
   ms_strength   = ""
   ms_state      = ""
   ms_started_at = nil
-end)
+end
+
+mud.trigger([[^Arcane protection status:$]], reset_ms_state)
+
+-- Drop stale deity-protection state on a character switch (`su`). See
+-- char_switch.lua.
+char_switch.on(reset_ms_state)
 
 -- ---------------------------------------------------------------------
 -- 5. Debug alias.

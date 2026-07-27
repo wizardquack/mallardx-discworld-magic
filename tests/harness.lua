@@ -49,6 +49,9 @@ function M.reset()
   M.commands = {}
   M.emits    = {}
   M.event_listeners = {}
+  M.storage  = {}
+  M.gmcp_values   = {}
+  M.gmcp_handlers = {}
   M.settings = copy(DEFAULT_SETTINGS)
 
   _G.mud = {
@@ -61,9 +64,24 @@ function M.reset()
     send       = function() end,
     command    = function(name, callback) table.insert(M.commands, { name = name, callback = callback }) end,
   }
+  -- Faithful-ish bus: emit records the call AND dispatches synchronously to
+  -- every on() listener for that name — including listeners in the same
+  -- plugin, exactly like the host (see plugins/host.rs event_emit, which
+  -- delivers to all listeners regardless of emitter). A small depth guard
+  -- mirrors the host's MAX_EVENT_DEPTH so a listener that re-emits can't
+  -- spin forever.
+  M.emit_depth = 0
   _G.events = {
-    emit = function(name, data) table.insert(M.emits, { name = name, data = data }) end,
-    on   = function(name, cb)   table.insert(M.event_listeners, { name = name, callback = cb }) end,
+    emit = function(name, data)
+      table.insert(M.emits, { name = name, data = data })
+      if M.emit_depth >= 16 then return end
+      M.emit_depth = M.emit_depth + 1
+      for _, l in ipairs(M.event_listeners) do
+        if l.name == name then l.callback(data) end
+      end
+      M.emit_depth = M.emit_depth - 1
+    end,
+    on   = function(name, cb) table.insert(M.event_listeners, { name = name, callback = cb }) end,
   }
   _G.settings = {
     get      = function(key) return M.settings[key] end,
@@ -74,6 +92,41 @@ function M.reset()
       table.insert(M.notifies, { title = title, body = body, opts = opts })
     end,
   }
+  _G.storage = {
+    get    = function(key) return M.storage[key] end,
+    set    = function(key, val) M.storage[key] = val end,
+    has    = function(key) return M.storage[key] ~= nil end,
+    delete = function(key) M.storage[key] = nil end,
+  }
+  _G.gmcp = {
+    on  = function(pkg, cb) M.gmcp_handlers[pkg] = cb end,
+    get = function(path) return M.gmcp_values[path] end,
+  }
+end
+
+-- Dispatch a cross-plugin event to every listener registered via
+-- events.on. Equivalent to events.emit's fan-out but without recording an
+-- emit — use it to inject an event as if another module had emitted it.
+function M.dispatch(name, data)
+  for _, l in ipairs(M.event_listeners) do
+    if l.name == name then l.callback(data) end
+  end
+end
+
+-- Deliver a GMCP frame to the handler registered via gmcp.on(pkg, ...).
+function M.fire_gmcp(pkg, data)
+  local cb = M.gmcp_handlers[pkg]
+  if not cb then error("no gmcp handler for: " .. tostring(pkg), 2) end
+  cb(pkg, data)
+end
+
+-- The events.emit calls recorded so far whose name matches `name`, in order.
+function M.emits_for(name)
+  local out = {}
+  for _, e in ipairs(M.emits) do
+    if e.name == name then table.insert(out, e.data) end
+  end
+  return out
 end
 
 -- (Re)load a plugin module against the current stubs. Clears the

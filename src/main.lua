@@ -556,6 +556,19 @@ standard([[Mother Twinter's Yarrow Enchantment]])
 standard([[Nanny Revere's Traitorous Talisman]])
 standard([[Wee Flaudia's Fluffy Ear Muffs]])
 
+-- Character-switch (`su`) detection. Owns magic's char.info subscription
+-- and resets each shield module's stale self state on a name change. The
+-- shield modules require this themselves and self-register their resets;
+-- requiring it here as well makes the dependency explicit and guarantees
+-- its subscription is wired even if module load order shifts.
+require("char_switch")
+
+-- Self shield-state recorder: persists the self shield grid per character
+-- and replays it to consumers (vitals/grouping/…) on switch + relog, so
+-- they need no shield persistence of their own. Required before the
+-- shield modules so it's recording from the first event they emit.
+require("shield_state")
+
 -- EFF (Endorphin's Floating Friend) state tracking + drop banner.
 -- See src/eff.lua for self + src/eff_others.lua for other players.
 require("eff")

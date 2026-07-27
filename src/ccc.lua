@@ -53,6 +53,8 @@
 -- the event — consumers dedupe if they care about transitions vs.
 -- confirmations.
 
+local char_switch = require("char_switch")
+
 local ccc_substance  = ""
 local ccc_strength   = nil
 local ccc_state      = ""
@@ -210,12 +212,18 @@ mud.trigger([[^With a brief flash of magic, your (metallic|stony|elastic) skin f
 -- follow repopulate CCC state via the per-rung triggers above; if no CCC
 -- line follows, state stays cleared (no covering active).
 
-mud.trigger([[^Arcane protection status:$]], function()
+local function reset_ccc_state()
   ccc_substance  = ""
   ccc_strength   = nil
   ccc_state      = ""
   ccc_started_at = nil
-end)
+end
+
+mud.trigger([[^Arcane protection status:$]], reset_ccc_state)
+
+-- Drop stale covering state on a character switch (`su`). See
+-- char_switch.lua for the rationale.
+char_switch.on(reset_ccc_state)
 
 -- ---------------------------------------------------------------------
 -- 5. Debug alias.

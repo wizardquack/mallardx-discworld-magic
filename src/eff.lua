@@ -52,6 +52,8 @@
 --                 branch and defeat the silent intent). Cleared by the clatters
 --                 trigger at the end of the dance sequence.
 
+local char_switch = require("char_switch")
+
 local eff_item    = ""
 local eff_state   = "unknown"
 local eff_silent  = false
@@ -174,10 +176,16 @@ end)
 -- CCC and Bugshield register their own resets in src/ccc.lua and
 -- src/bug.lua against the same line.
 -- Source: `magic.tin` (shared header for EFF/CCC/TPA/Bugshield).
-mud.trigger([[^Arcane protection status:$]], function()
+local function reset_eff_state()
   eff_item  = ""
   eff_state = ""
-end)
+end
+
+mud.trigger([[^Arcane protection status:$]], reset_eff_state)
+
+-- Drop stale floater state on a character switch (`su`) — same reset the
+-- protection-status header runs. See char_switch.lua for the rationale.
+char_switch.on(reset_eff_state)
 
 -- ---------------------------------------------------------------------
 -- 6. !eff debug alias.

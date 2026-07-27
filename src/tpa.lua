@@ -71,6 +71,8 @@ local TPA_PERCENT = {
   ["broken"]            = 0,
 }
 
+local char_switch = require("char_switch")
+
 local tpa_glow       = ""
 local tpa_percent    = nil
 local tpa_state      = ""
@@ -285,13 +287,19 @@ mud.replace(
 -- registers its own reset against this same header in main.lua —
 -- multiple anonymous triggers on a pattern all fire.
 
-mud.trigger([[^Arcane protection status:$]], function()
+local function reset_tpa_state()
   tpa_glow       = ""
   tpa_percent    = nil
   tpa_state      = ""
   tpa_hits       = 0
   tpa_started_at = nil
-end)
+end
+
+mud.trigger([[^Arcane protection status:$]], reset_tpa_state)
+
+-- Drop stale impact-shield state on a character switch (`su`). See
+-- char_switch.lua.
+char_switch.on(reset_tpa_state)
 
 -- ---------------------------------------------------------------------
 -- 7. Debug alias.
