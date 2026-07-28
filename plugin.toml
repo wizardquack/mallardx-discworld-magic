@@ -20,7 +20,7 @@ sends = true
 gmcp_access = ["char.info", "char.info.*"]
 
 [gmcp]
-advertise = ["char.info"]
+advertise = ["char.info 1"]
 
 [worlds]
 match = ["discworld.starturtle.net:*"]
