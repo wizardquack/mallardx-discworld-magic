@@ -32,6 +32,49 @@ spellcheck table gains four extra columns per stage: success chance,
 your current level + bonus in the stage's skill, and a hint at the
 bonus delta needed to reach the next chance tier.
 
+## `/mindspace` — spell-memory budget
+
+Wizards and witches can only hold so many spells in their head at once:
+each spell has a *size* (its Mindspace cost), and the sum of your known
+spells' sizes may not exceed your available mindspace — which is your
+`magic.spells.special` bonus + 30.
+
+This plugin tracks both halves and annotates the `spells` command:
+
+- **Per-spell sizes.** In the `spells` listing, each spell name is tagged
+  with its mindspace cost (e.g. `Wungle's Great Sucking (35)`). The tag is
+  gated to a column boundary — the name must sit at line start or after 2+
+  spaces *and* be followed by 2+ spaces or line end — so it only fires in
+  the columnar listing. Ordinary prose ("You prepare to cast … on
+  yourself.") and chat mentions stay untagged (verified against real game
+  logs). Spell names keep their usual by-tier colour everywhere.
+- **Total summary.** After the listing settles, a colour-coded line —
+  `Total spell size: 337 / 415  (78 free)` — reports how much of your
+  mindspace you're using (green under budget, yellow at exactly full,
+  red over).
+- **`/mindspace`** (alias `/mind`) prints an on-demand breakdown: your
+  available capacity, used size, and every known spell sorted
+  largest-first so the mindspace hogs are obvious.
+
+The known-spell set is seeded from the `spells` listing and kept live by
+`remember` / `forget` lines, then persisted per character — so
+`/mindspace` stays accurate between listings and across relogs. Running
+`spells <category>` re-scopes only that category, leaving the others
+intact.
+
+The available-mindspace total comes from
+[discworld-vitals](https://github.com/wizardquack/mallardx-discworld-vitals)'
+skill snapshot (run its `/skills-refresh` once). Without it, sizes and the
+used total still work — only the capacity figure is withheld, with a nudge
+to refresh.
+
+On every change the plugin emits `net.mallard.discworld.mindspace.updated`
+`{ charname, total, used, free, known_count }` (`total`/`free` are `nil`
+until a skill snapshot lands) so other plugins can surface the budget.
+
+> Not to be confused with Major Shield (divine "ms" protection), which
+> this plugin also tracks separately.
+
 ## Cross-plugin events in depth
 
 This plugin emits `net.mallard.discworld.shield.up` and

@@ -39,6 +39,34 @@ local function copy(t)
   return out
 end
 
+-- Span-template stubs for mud.span / mud.capture (the spans form of
+-- mud.replace). Faithful enough to RECORD the template: each returns a
+-- tagged item, and `..` flattens items into an ordered `__spanlist`
+-- (with `.items`) so `mud.capture(1, {...}) .. mud.span(" (n)", {...})`
+-- reaches `mud.replace` as an inspectable list.
+local SPAN_MT, ITEM_MT
+local function span_concat(a, b)
+  local items = {}
+  local function add(x)
+    if type(x) == "table" and x.__spanlist then
+      for _, it in ipairs(x.items) do items[#items + 1] = it end
+    elseif type(x) == "table" and x.__spanitem then
+      items[#items + 1] = x
+    elseif type(x) == "string" then
+      items[#items + 1] = { kind = "span", text = x }
+    end
+  end
+  add(a); add(b)
+  return setmetatable({ __spanlist = true, items = items }, SPAN_MT)
+end
+SPAN_MT  = { __concat = span_concat }
+ITEM_MT  = { __concat = span_concat }
+local function span_item(kind, fields)
+  fields.kind = kind
+  fields.__spanitem = true
+  return setmetatable(fields, ITEM_MT)
+end
+
 function M.reset()
   M.triggers = {}
   M.aliases  = {}
@@ -47,6 +75,8 @@ function M.reset()
   M.notifies = {}
   M.sounds   = {}
   M.commands = {}
+  M.replaces = {}
+  M.delays   = {}
   M.emits    = {}
   M.event_listeners = {}
   M.storage  = {}
@@ -58,11 +88,38 @@ function M.reset()
     trigger    = function(pattern, callback) table.insert(M.triggers, { pattern = pattern, callback = callback }) end,
     alias      = function(pattern, callback) table.insert(M.aliases,  { pattern = pattern, callback = callback }) end,
     style      = function(pattern, opts)     table.insert(M.styles,   { pattern = pattern, opts = opts }) end,
-    note       = function(text, style)       table.insert(M.notes,    { text = text, style = style }) end,
+    -- Legacy `(text)` / `(text, style)` and the span form `(span, span, …)`.
+    -- Records a reconstructed `.text` (so string assertions keep working)
+    -- plus `.spans` (list of { text, opts }) for the span form.
+    note       = function(...)
+      local a = table.pack(...)
+      if a.n <= 2 and type(a[1]) == "string"
+         and (a[2] == nil or (type(a[2]) == "table" and not a[2].__spanitem and not a[2].__spanlist)) then
+        table.insert(M.notes, { text = a[1], style = a[2] })
+        return
+      end
+      local spans, text = {}, ""
+      local function add(x)
+        if type(x) == "string" then
+          spans[#spans + 1] = { text = x }; text = text .. x
+        elseif type(x) == "table" and x.__spanlist then
+          for _, it in ipairs(x.items) do add(it) end
+        elseif type(x) == "table" and x.__spanitem then
+          spans[#spans + 1] = { text = x.text, opts = x.opts }; text = text .. (x.text or "")
+        end
+      end
+      for i = 1, a.n do add(a[i]) end
+      table.insert(M.notes, { text = text, spans = spans })
+    end,
     play_sound = function(name, opts)        table.insert(M.sounds,   { name = name, opts = opts }) end,
-    replace    = function() end,
+    replace    = function(pattern, template, opts) table.insert(M.replaces, { pattern = pattern, template = template, opts = opts }) end,
     send       = function() end,
-    command    = function(name, callback) table.insert(M.commands, { name = name, callback = callback }) end,
+    command    = function(name, callback, opts) table.insert(M.commands, { name = name, callback = callback, opts = opts }) end,
+    -- Records the scheduled callback; tests drive it via M.flush_delays().
+    delay      = function(ms, fn) table.insert(M.delays, { ms = ms, fn = fn }) end,
+    -- Spans form of mud.replace templates (see span_item above).
+    span       = function(text, opts) return span_item("span",    { text = text, opts = opts }) end,
+    capture    = function(n, opts)    return span_item("capture", { n = n, opts = opts }) end,
   }
   -- Faithful-ish bus: emit records the call AND dispatches synchronously to
   -- every on() listener for that name — including listeners in the same
@@ -153,6 +210,23 @@ function M.find_trigger(needle)
           " triggers: " .. table.concat(pats, " | "), 2)
   end
   return hits[1]
+end
+
+-- Run every scheduled mud.delay callback, in registration order, then
+-- clear the queue. Generation-guarded callbacks self-skip if stale, so
+-- running all of them reproduces "the debounce eventually fired once".
+function M.flush_delays()
+  local pending = M.delays
+  M.delays = {}
+  for _, d in ipairs(pending) do d.fn() end
+end
+
+-- Invoke the command registered under `name` with an args string.
+function M.fire_command(name, args)
+  for _, c in ipairs(M.commands) do
+    if c.name == name then c.callback({ args = args or "" }); return end
+  end
+  error("no command registered: " .. name, 2)
 end
 
 -- Find the registered alias whose pattern contains `needle`.

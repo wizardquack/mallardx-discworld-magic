@@ -430,131 +430,57 @@ end)
 --   "3" defensive / support        → green
 --   "4" standard / utility         → cyan
 
-local function offensive(name) mud.style("(" .. name .. ")", { capture = 1, fg = "red", bold = true }) end
-local function defensive(name) mud.style("(" .. name .. ")", { capture = 1, fg = "green" }) end
-local function standard(name)  mud.style("(" .. name .. ")", { capture = 1, fg = "cyan"  }) end
+-- Colour + size are registered as SEPARATE, non-overlapping rules:
+--   * colour: a capture=1 `mud.style` on the bare name — applies wherever
+--     the name appears (cast messages, chat, the `spells` listing).
+--   * size:   a capture=1 `mud.replace` that appends " (N)", but ONLY when
+--     the name is followed by 2+ spaces or end-of-line — i.e. the columnar
+--     `spells` listing. That keeps sentences like "You prepare to cast
+--     <name> on yourself." (single trailing space) size-free. The size
+--     targets the trailing whitespace (group 1), which is DISJOINT from the
+--     name's colour range, so both mods apply. (Folding colour+size into
+--     one rewrite would tag the name EVERYWHERE; two rules let us gate the
+--     size without losing the always-on colour.)
+--
+-- Tier styles + the curated name lists live in src/spell_tiers.lua, shared
+-- read-only with /mindspace so the card can colour names identically. See
+-- that file re: Mallard's non-caching `require` (why it must be static data).
+local spell_tiers  = require("spell_tiers")
+local ms_spelldata = require("spelldata")
+local SPELL_SIZE = {}
+for _, s in pairs(ms_spelldata) do
+  if type(s.name) == "string" and s.name ~= "" then SPELL_SIZE[s.name] = s.size end
+end
 
--- Offensive (custom_colour="7")
-offensive([[Calm Embrace of Illusionary Beauty]])
-offensive([[Doctor Kelleflump's Deadly Demon]])
-offensive([[Effermhor's Hypersonic Assault]])
-offensive([[Fiddelmaker's Auriferous Embrace]])
-offensive([[Frygellhan's Fiendish Orbit Disruptor]])
-offensive([[G'flott's Olfactory Nightmare]])
-offensive([[Journey of the Heavenly Storm Dragon]])
-offensive([[Kamikaze Oryctolagus Flammula]])
-offensive([[Kelleflump's Irritating Demon]])
-offensive([[Malich's Penetrating Ocular Lance]])
-offensive([[Memories of a Vicious Chicken]])
-offensive([[Mugwuddle's Muddling Mirage]])
-offensive([[Myrandil's Vicious Seizure]])
-offensive([[Nargl'frob's Empyrean Spear]])
-offensive([[Narquin's Mist of Doom]])
-offensive([[Old Bellicus' Brazen Knuckles]])
-offensive([[Pragi's Fiery Gaze]])
-offensive([[Pragi's Lost Gaze]])
-offensive([[Reckless Encouragement of Arcane Peacock]])
-offensive([[Rugged Victor's Rodentia Vivisection]])
-offensive([[Skeetbraskin's Fuliginous Perdition]])
-offensive([[Sorsalsean's Seismic Eruption]])
-offensive([[Stacklady's Morphic Resonator]])
-offensive([[Von Hasselhoff's Skin Condition]])
-offensive([[Wonker's Wicked Wobble]])
-offensive([[Wungle's Body Part Suggestion]])
-offensive([[Wungle's Great Sucking]])
-offensive([[Gammer Shorga's Helpful Undergrowth]])
-offensive([[Mother Brynda's Call of Gravity]])
-offensive([[Mother Feelbright's Busy Bees]])
+local function ms_escape(s)
+  return (s:gsub("([%(%)%[%]%{%}%.%*%+%-%?%^%$%|\\])", "\\%1"))
+end
 
--- Defensive / support (custom_colour="3")
-defensive([[Chrenedict's Corporeal Covering]])
-defensive([[Endorphin's Floating Friend]])
-defensive([[Grisald's Reanimated Guardian]])
-defensive([[Heezlewurst's Elemental Buffer]])
-defensive([[Kipperwald's Perlustration Prevention]])
-defensive([[Sageroff's Sentry Summoning]])
-defensive([[Sorklin's Field of Protection]])
-defensive([[Transcendent Pneumatic Alleviator]])
-defensive([[Banishing of Prying Eyes]])
-defensive([[Banishing of Unnatural Urges]])
-defensive([[Grammer Scorbic's Household Guard]])
-defensive([[Mama Kolydina's Instant Infestation]])
+local function highlight(name, style)
+  local esc = ms_escape(name)
+  -- Colour the name wherever it appears.
+  local sopts = { capture = 1 }
+  for k, v in pairs(style) do sopts[k] = v end
+  mud.style("(" .. esc .. ")", sopts)
+  -- Append its mindspace size, but only inside the columnar `spells`
+  -- listing — i.e. the name sits at a COLUMN boundary: preceded by
+  -- start-of-line or 2+ spaces, AND followed by 2+ spaces or end-of-line.
+  -- Both sides matter: gating only the trailing side still tagged spell
+  -- names at the end of chat lines ("... wisps: Endorphin's Floating
+  -- Friend") — verified against real Discworld logs, where the leading
+  -- boundary drops every such false positive to zero. The size rewrites
+  -- the trailing whitespace (group 1), disjoint from the name's colour
+  -- restyle above, so both apply and adjacent columns stay independent.
+  local size = SPELL_SIZE[name]
+  if size then
+    mud.replace("(?:^| {2,})(?:" .. esc .. ")( {2,}|$)", " (" .. size .. ")%1",
+      { capture = 1, fg = "cyan" })
+  end
+end
 
--- Standard / utility (custom_colour="4")
-standard([[A Cup of Tea and Sake]])
-standard([[Al'Hrahaz's Scintillating Blorpler]])
-standard([[Amazing Silicate Blorpler]])
-standard([[Atmospheric Inscription Wonder]])
-standard([[Bifram's Amazing Fireworks]])
-standard([[Booch's Extremal Polymorphism]])
-standard([[Boolywog's Forbidden Pleasures]])
-standard([[Brassica Oleracea Ambulata]])
-standard([[Brother Happalon's Elementary Enchanting]])
-standard([[Cherry Blossoms in Bloom]])
-standard([[Collatrap's Instant Pickling Stick]])
-standard([[Crondor's Fabulous Detection]])
-standard([[Crondor's Marvellous Sequestration]])
-standard([[Crondor's Mysterious Sparkling]])
-standard([[Dismal Digit of Doom]])
-standard([[Doctor Worblehat's Flaming Primate Premonition]])
-standard([[Duander's Thaumic Luminosity Disperser]])
-standard([[Ellamandyr's Hyaline Amulet]])
-standard([[Eringyas' Surprising Bouquet]])
-standard([[Fabrication Classification Identification]])
-standard([[Feyfirkin's Errant Trainee Collection Herbage]])
-standard([[Finneblaugh's Thaumic Float]])
-standard([[Floron's Fabulous Mirror]])
-standard([[Friddlefrod's Hydratic Extrusion]])
-standard([[Fyodor's Nimbus of Porterage]])
-standard([[Gillimer's Ring of Temperate Weather]])
-standard([[Grisald's Chilly Touch]])
-standard([[Gryntard's Feathery Reliever]])
-standard([[Independent Recurring Vocaliser]])
-standard([[Jogloran's Portal of Cheaper Travel]])
-standard([[Jorodin's Magnificent Communicator]])  -- listed in both Wizard and Witch in source; one registration suffices
-standard([[Luquayle's Longevity-Enhancing Ballast]])
-standard([[Malich's AshkEnte Circle]])
-standard([[Malich's AshkEnte Summoning Incantation]])
-standard([[Master Glimer's Amazing Glowing Thing]])
-standard([[Master Woddeley's Luminescent Companion]])
-standard([[Myrandil's Mask of Death]])
-standard([[Narquin's Hand of Acquisition]])
-standard([[Objandeller's Thaumic Funnel]])
-standard([[Patient Taming of the Quantum Weather Butterfly]])
-standard([[Polliwiggle's Puissancy Probe]])
-standard([[Pragi's Molten Gaze]])
-standard([[Professor Flambardie's Grim Amulet]])
-standard([[Rubayak's Power Dispenser]])
-standard([[Rubayak's Power Storage]])
-standard([[Ralstorphine's Refreshing Draught]])
-standard([[Ridcully's Travelling Furniture Manufactory]])
-standard([[Scolorid's Scintillating Scribbling]])
-standard([[Thousand Dancing Celestial Fates]])
-standard([[Torqvald's Illusion Generatrix]])
-standard([[Torqvald's Many Colours]])
-standard([[Turnwhistle's Effulgent Autiridescence]])
-standard([[Union of the Phoenix and Divine Dragon]])
-standard([[Worstler's Advanced Metallurgical Glance]])
-standard([[Worstler's Elementary Mineralogical Glance]])
-standard([[Wurphle's Midnight Snack]])
-standard([[Wurphle's Packed Lunch]])
-standard([[Yordon's Extremal Extension]])
-standard([[Banishing of Loquacious Spirits]])
-standard([[Biddy Amble's Bee Buzzer]])
-standard([[Delusions of Grandeur]])
-standard([[Gammer Shorga's Clever Creeper]])
-standard([[Gammer Tumult's Amalgamator]])
-standard([[Goodie Whemper's Apple Divination]])
-standard([[Granny Beedle's Cooperative Credits]])
-standard([[Granny Benedict's Bond of Loyalty]])
-standard([[Granny Lipintense's Layer of Lard]])
-standard([[Hag's Blessing]])
-standard([[Mama Adena's Burden of Responsibility]])
-standard([[Mama Blackwing's Potent Preserver]])
-standard([[Mother Harblist's Fruity Flyer]])
-standard([[Mother Twinter's Yarrow Enchantment]])
-standard([[Nanny Revere's Traitorous Talisman]])
-standard([[Wee Flaudia's Fluffy Ear Muffs]])
+for name, style in pairs(spell_tiers) do
+  highlight(name, style)
+end
 
 -- Character-switch (`su`) detection. Owns magic's char.info subscription
 -- and resets each shield module's stale self state on a name change. The
@@ -616,3 +542,11 @@ require("high")
 -- type-grouped multi-column list view; TM/spellcheck path is deferred
 -- (it needs the player's skill levels, which aren't in scope here).
 require("spell")
+
+-- Mindspace tracking + annotations — ports tt_dw's spellsizes.tin +
+-- tip_mindspace. Tracks total available mindspace (magic.spells.special
+-- bonus + 30, via discworld-vitals' skill snapshot) and the set of spells
+-- you know (from the `spells` listing + remember/forget), annotates the
+-- listing with per-spell sizes and a colour-coded used/total summary, and
+-- exposes `/mindspace`. NB: unrelated to src/ms.lua (Major Shield).
+require("mindspace")
