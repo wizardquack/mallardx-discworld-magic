@@ -5,7 +5,10 @@
 -- heavier items block more but need more defensive skill. Ported from
 -- tt_dw scripts/tips/floaters.tin.
 
-local items = require("floater_items")
+local items       = require("floater_items")
+local char_switch = require("char_switch")
+
+local DEFENSIVE_PATH = "magic.spells.defensive"
 
 local M = {}
 
@@ -85,5 +88,37 @@ function M.parse_args(raw)
   end
   return out
 end
+
+-- Cached defensive bonus, sourced from discworld-vitals' skills snapshot —
+-- the same wiring mindspace.lua uses for the special bonus. nil until we
+-- hear a snapshot (or the caller passes an override).
+local cached_bonus = nil
+
+events.on("net.mallard.discworld.skills.updated", function(data)
+  if type(data) ~= "table" or type(data.snapshot) ~= "table" then return end
+  local b = data.snapshot.bonus and data.snapshot.bonus[DEFENSIVE_PATH]
+  if type(b) == "number" then cached_bonus = b end
+end)
+
+-- An explicit override wins; otherwise use the cached snapshot value.
+function M.resolve_bonus(override)
+  if type(override) == "number" then return override end
+  return cached_bonus
+end
+
+local function request_skills()
+  events.emit("net.mallard.discworld.skills.request",
+    { charname = char_switch.current() })
+end
+
+-- On a true switch (`su`) the previous character's bonus is meaningless.
+char_switch.on(function()
+  cached_bonus = nil
+  request_skills()
+end)
+char_switch.on_char(function() request_skills() end)
+
+-- Load-time pull so a mid-session plugin reload self-heals.
+request_skills()
 
 return M

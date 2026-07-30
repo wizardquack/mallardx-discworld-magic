@@ -170,5 +170,39 @@ test("parse_args garbage flags error", function()
   assert(ec.parse_args("-5").error == true)   -- negative bonus rejected
 end)
 
+-- ---------------------------------------------------------------------
+-- 4. Defensive-bonus cache from skills.updated + override.
+-- ---------------------------------------------------------------------
+
+local function skills_frame(defensive)
+  return { snapshot = { bonus = { ["magic.spells.defensive"] = defensive } } }
+end
+
+test("bonus cached from skills.updated snapshot", function()
+  local ec = h.load("eff_check")
+  assert(ec.resolve_bonus(nil) == nil, "no bonus before any snapshot")
+  h.dispatch("net.mallard.discworld.skills.updated", skills_frame(320))
+  assert(ec.resolve_bonus(nil) == 320, "cached: " .. tostring(ec.resolve_bonus(nil)))
+end)
+
+test("override beats cached bonus", function()
+  local ec = h.load("eff_check")
+  h.dispatch("net.mallard.discworld.skills.updated", skills_frame(320))
+  assert(ec.resolve_bonus(400) == 400)
+end)
+
+test("skills.request emitted at load", function()
+  local ec = h.load("eff_check")
+  assert(#h.emits_for("net.mallard.discworld.skills.request") >= 1,
+    "expected a skills.request at load")
+end)
+
+test("malformed skills frame is ignored", function()
+  local ec = h.load("eff_check")
+  h.dispatch("net.mallard.discworld.skills.updated", { snapshot = "nope" })
+  h.dispatch("net.mallard.discworld.skills.updated", nil)
+  assert(ec.resolve_bonus(nil) == nil)
+end)
+
 print("---")
 print(passed .. " passed")
