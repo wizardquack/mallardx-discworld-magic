@@ -129,5 +129,46 @@ test("compute applies weight modifier before ratio", function()
   assert(mod.rows[1].rec_bonus == 83, "rec_bonus with mod: " .. mod.rows[1].rec_bonus)
 end)
 
+-- ---------------------------------------------------------------------
+-- 3. parse_args(): bonus vs %-weight vs help vs garbage.
+-- ---------------------------------------------------------------------
+
+test("parse_args empty -> no bonus, zero mod", function()
+  local ec = h.load("eff_check")
+  local a = ec.parse_args("")
+  assert(a.bonus == nil and a.mod == 0 and not a.help and not a.error)
+end)
+
+test("parse_args bare number is bonus", function()
+  local ec = h.load("eff_check")
+  local a = ec.parse_args("350")
+  assert(a.bonus == 350 and a.mod == 0)
+end)
+
+test("parse_args %-suffixed number is weight mod", function()
+  local ec = h.load("eff_check")
+  local a = ec.parse_args("15%")
+  assert(a.bonus == nil and a.mod == 15)
+end)
+
+test("parse_args accepts both, order-independent", function()
+  local ec = h.load("eff_check")
+  local a = ec.parse_args("350 15%")
+  local b = ec.parse_args("15% 350")
+  assert(a.bonus == 350 and a.mod == 15, "a")
+  assert(b.bonus == 350 and b.mod == 15, "b")
+end)
+
+test("parse_args help flag", function()
+  local ec = h.load("eff_check")
+  assert(ec.parse_args("help").help == true)
+end)
+
+test("parse_args garbage flags error", function()
+  local ec = h.load("eff_check")
+  assert(ec.parse_args("banana").error == true)
+  assert(ec.parse_args("-5").error == true)   -- negative bonus rejected
+end)
+
 print("---")
 print(passed .. " passed")

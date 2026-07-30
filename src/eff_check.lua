@@ -62,4 +62,28 @@ function M.compute(guild, bonus, mod_pct)
   return { optimal_weight = optimal, rows = rows }
 end
 
+-- Parse raw command args. `%`-suffixed token -> weight mod; bare
+-- non-negative number -> bonus override; `help` -> usage; else error.
+function M.parse_args(raw)
+  local out = { bonus = nil, mod = 0 }
+  for tok in (raw or ""):gmatch("%S+") do
+    if tok == "help" then
+      out.help = true
+    else
+      local pct = tok:match("^(%d+%.?%d*)%%$")
+      if pct then
+        out.mod = tonumber(pct)
+      else
+        local n = tonumber(tok)
+        if n and n >= 0 then
+          out.bonus = n
+        else
+          out.error = true
+        end
+      end
+    end
+  end
+  return out
+end
+
 return M
