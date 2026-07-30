@@ -53,5 +53,81 @@ test("floater_items spot weights match tt_dw", function()
   assert(approx(items.utensils[20].weight, 28.444))
 end)
 
+-- ---------------------------------------------------------------------
+-- 2. compute(): optimal weight, tiers, star, weight-mod, multiplier.
+-- ---------------------------------------------------------------------
+
+test("compute optimal weight uses guild multiplier", function()
+  local ec = h.load("eff_check")
+  local r_eff  = ec.compute("eff", 375, 0)
+  assert(approx(r_eff.optimal_weight, 10), "eff optimal: " .. r_eff.optimal_weight)
+  local r_gshg = ec.compute("gshg", 550, 0)
+  assert(approx(r_gshg.optimal_weight, 10), "gshg optimal: " .. r_gshg.optimal_weight)
+end)
+
+test("compute rec_bonus is round(weight * multiplier)", function()
+  local ec = h.load("eff_check")
+  local r = ec.compute("eff", 375, 0)
+  -- small wooden shield: weight 2 * 37.5 = 75
+  assert(r.rows[1].rec_bonus == 75, "rec_bonus: " .. r.rows[1].rec_bonus)
+  -- giant turtle shell: 17.222 * 37.5 = 645.825 -> 646
+  assert(r.rows[25].rec_bonus == 646, "rec_bonus: " .. r.rows[25].rec_bonus)
+end)
+
+test("compute tiers hit documented boundaries", function()
+  local ec = h.load("eff_check")
+  -- Choose an optimal weight of 10 (bonus 375 / 37.5) so ratio == weight/10.
+  local r = ec.compute("eff", 375, 0)
+  local function tier_at(weight)
+    for _, row in ipairs(r.rows) do
+      if approx(row.weight, weight) then return row.block end
+    end
+    error("no row with weight " .. weight)
+  end
+  -- ratio 0.95 boundary: weight 9.111 (oval bronze) ratio 0.9111 -> 99.9%+
+  assert(tier_at(9.111) == "99.9%+", "9.111 tier")
+  -- weight 10.111 (black iron) ratio 1.0111 -> 90%+
+  assert(tier_at(10.111) == "90%+", "10.111 tier")
+  -- weight 11 (three star) ratio 1.10 -> 80%+  (<=1.10 inclusive)
+  assert(tier_at(11) == "80%+", "11 tier")
+  -- weight 11.444 (large metal) ratio 1.1444 -> <80%
+  assert(tier_at(11.444) == "<80%", "11.444 tier")
+end)
+
+test("compute tier colours match spec", function()
+  local ec = h.load("eff_check")
+  local r = ec.compute("eff", 375, 0)
+  local function style_at(weight)
+    for _, row in ipairs(r.rows) do
+      if approx(row.weight, weight) then return row.style end
+    end
+  end
+  assert(style_at(2).fg == "green" and style_at(2).bold == true, "great = green bold")
+  assert(style_at(11).fg == "light red", "bad = light red")   -- ratio 1.10
+  assert(style_at(11.444).fg == "red" and style_at(11.444).bold == true, "horrible = red bold")
+end)
+
+test("compute stars first Good/OK item (0.95 < ratio <= 1.05)", function()
+  local ec = h.load("eff_check")
+  local r = ec.compute("eff", 375, 0)  -- optimal 10
+  local starred, star_count = nil, 0
+  for _, row in ipairs(r.rows) do
+    if row.star then starred = row.name; star_count = star_count + 1 end
+  end
+  assert(star_count == 1, "exactly one star, got " .. star_count)
+  -- First item with ratio > 0.95: black iron shield (10.111 -> 1.0111).
+  -- Everything up to oval bronze (9.111 -> 0.9111) is <=0.95 (great).
+  assert(starred == "black iron shield", "starred: " .. tostring(starred))
+end)
+
+test("compute applies weight modifier before ratio", function()
+  local ec = h.load("eff_check")
+  local base = ec.compute("eff", 375, 0)
+  local mod  = ec.compute("eff", 375, 10)   -- +10% weight
+  assert(approx(mod.rows[1].weight, base.rows[1].weight * 1.1), "weight scaled")
+  -- 2 * 1.1 * 37.5 = 82.5; round(82.5) with floor(x+0.5) = 83.
+  assert(mod.rows[1].rec_bonus == 83, "rec_bonus with mod: " .. mod.rows[1].rec_bonus)
+end)
+
 print("---")
 print(passed .. " passed")
