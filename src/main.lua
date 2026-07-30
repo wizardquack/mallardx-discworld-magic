@@ -550,3 +550,6 @@ require("spell")
 -- listing with per-spell sizes and a colour-coded used/total summary, and
 -- exposes `/mindspace`. NB: unrelated to src/ms.lua (Major Shield).
 require("mindspace")
+
+-- /eff (wizard shields) + /gshg (witch utensils) weight-efficiency calculator.
+require("eff_check")
