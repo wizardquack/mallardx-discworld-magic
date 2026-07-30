@@ -208,12 +208,6 @@ end)
 -- 5. Command output: header, table, right-alignment, fallback, help.
 -- ---------------------------------------------------------------------
 
-local function note_texts()
-  local out = {}
-  for _, n in ipairs(h.notes) do out[#out + 1] = n.text end
-  return out
-end
-
 local function find_note(needle)
   for _, n in ipairs(h.notes) do
     if n.text:find(needle, 1, true) then return n end
@@ -271,6 +265,30 @@ test("/gshg uses utensils and witch multiplier", function()
   h.fire_command("gshg", "550")   -- optimal 10
   assert(find_note("potato peeler"), "gshg should list utensils")
   assert(not find_note("giant turtle shell"), "gshg must not list shields")
+end)
+
+-- ---------------------------------------------------------------------
+-- 6. I1 regression: fractional bonus override must not crash (%.0f fix).
+-- ---------------------------------------------------------------------
+
+test("/eff 350.5 (fractional override) does not crash and shows header", function()
+  h.load("eff_check")
+  h.fire_command("eff", "350.5")
+  assert(#h.notes >= 1, "expected output notes")
+  assert(h.notes[1].text:find("Defensive bonus:", 1, true),
+    "first note should be header, got: " .. tostring(h.notes[1] and h.notes[1].text))
+end)
+
+-- ---------------------------------------------------------------------
+-- 7. M2: mixed valid+garbage args shows usage, not a table.
+-- ---------------------------------------------------------------------
+
+test("/eff 350 banana shows usage note (parse error)", function()
+  h.load("eff_check")
+  h.fire_command("eff", "350 banana")
+  assert(find_note("/eff"), "expected a usage note mentioning /eff")
+  -- parse_args sees 'banana' -> error=true; run() returns after usage note
+  assert(#h.notes <= 3, "should not print a table, got " .. #h.notes .. " notes")
 end)
 
 print("---")

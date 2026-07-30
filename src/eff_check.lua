@@ -167,7 +167,7 @@ local function run(guild, raw)
   local result = M.compute(guild, bonus, a.mod)
   local namew  = name_width(result.rows)
 
-  local head = string.format("Defensive bonus: %d \u{2192} optimal floater weight ~%.1f lb",
+  local head = string.format("Defensive bonus: %.0f \u{2192} optimal floater weight ~%.1f lb",
     bonus, result.optimal_weight)
   if a.mod and a.mod > 0 then
     head = head .. string.format("   [+%g%% weight mod]", a.mod)
