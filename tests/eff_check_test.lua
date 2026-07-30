@@ -204,5 +204,74 @@ test("malformed skills frame is ignored", function()
   assert(ec.resolve_bonus(nil) == nil)
 end)
 
+-- ---------------------------------------------------------------------
+-- 5. Command output: header, table, right-alignment, fallback, help.
+-- ---------------------------------------------------------------------
+
+local function note_texts()
+  local out = {}
+  for _, n in ipairs(h.notes) do out[#out + 1] = n.text end
+  return out
+end
+
+local function find_note(needle)
+  for _, n in ipairs(h.notes) do
+    if n.text:find(needle, 1, true) then return n end
+  end
+end
+
+test("/eff with no bonus prints fallback", function()
+  h.load("eff_check")
+  h.fire_command("eff", "")
+  assert(find_note("defensive bonus"), "expected fallback mentioning defensive bonus")
+  -- fallback is one message, not a 27-line table
+  assert(#h.notes <= 3, "fallback should be short, got " .. #h.notes .. " notes")
+end)
+
+test("/eff help prints usage", function()
+  h.load("eff_check")
+  h.fire_command("eff", "help")
+  assert(find_note("/eff"), "usage should mention /eff")
+end)
+
+test("/eff with cached bonus prints header + full table", function()
+  h.load("eff_check")
+  h.dispatch("net.mallard.discworld.skills.updated", skills_frame(375))
+  h.fire_command("eff", "")
+  -- header + column header + 25 rows = 27 notes
+  assert(#h.notes == 27, "note count: " .. #h.notes)
+  assert(h.notes[1].text:find("Defensive bonus: 375", 1, true), "header: " .. h.notes[1].text)
+  assert(h.notes[1].text:find("~10.0 lb", 1, true), "optimal weight in header")
+end)
+
+test("/eff header shows weight mod when given", function()
+  h.load("eff_check")
+  h.fire_command("eff", "375 15%")
+  assert(h.notes[1].text:find("15%", 1, true), "header should note the +15% mod")
+end)
+
+test("/eff numeric columns are right-aligned + star on recommended row", function()
+  h.load("eff_check")
+  h.fire_command("eff", "375")   -- override, optimal 10
+  -- The starred row is black iron shield (see Task 2). Find it.
+  local star = find_note("* ")
+  assert(star, "expected a starred row")
+  assert(star.text:find("black iron shield", 1, true), "starred: " .. star.text)
+  -- Right-alignment: the weight cell ends in " lb" preceded by padding, and
+  -- the shorter block label "<80%" and longer "99.9%+" share a right edge.
+  local heavy = find_note("giant turtle shell")
+  local light = find_note("small wooden shield")
+  -- both rows have identical length (fixed-width columns)
+  assert(#heavy.text == #light.text, "rows not fixed-width: "
+    .. #heavy.text .. " vs " .. #light.text)
+end)
+
+test("/gshg uses utensils and witch multiplier", function()
+  h.load("eff_check")
+  h.fire_command("gshg", "550")   -- optimal 10
+  assert(find_note("potato peeler"), "gshg should list utensils")
+  assert(not find_note("giant turtle shell"), "gshg must not list shields")
+end)
+
 print("---")
 print(passed .. " passed")

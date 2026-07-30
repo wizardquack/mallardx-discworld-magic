@@ -121,4 +121,78 @@ char_switch.on_char(function() request_skills() end)
 -- Load-time pull so a mid-session plugin reload self-heals.
 request_skills()
 
+-- Fixed column widths (numeric columns right-aligned). Item name width is
+-- computed per-set from the longest name so the table stays tight.
+local WEIGHT_W, BLOCK_W, BONUS_W = 8, 7, 10
+
+local function name_width(rows)
+  local w = 4  -- min: len("Item")
+  for _, r in ipairs(rows) do
+    if #r.name > w then w = #r.name end
+  end
+  return w
+end
+
+local function fmt_row(prefix, name, weight, block, bonus, namew)
+  return string.format("%s%-" .. namew .. "s  %" .. WEIGHT_W .. "s  %"
+    .. BLOCK_W .. "s  %" .. BONUS_W .. "s", prefix, name, weight, block, bonus)
+end
+
+local USAGE = {
+  eff  = "/eff [bonus] [N%] — rate wizard shields for your defensive bonus. "
+      .. "Bare number overrides the bonus; N% adds weight (e.g. /eff 350 15%).",
+  gshg = "/gshg [bonus] [N%] — rate witch kitchen utensils for your defensive bonus.",
+}
+
+local function run(guild, raw)
+  local a = M.parse_args(raw)
+  if a.help or a.error then
+    mud.note(USAGE[guild], { fg = "cyan" })
+    return
+  end
+
+  local bonus = M.resolve_bonus(a.bonus)
+  if not bonus then
+    mud.note("I don't know your defensive bonus yet.", { fg = "yellow" })
+    mud.note(
+      mud.span("Pass it — e.g. ", { fg = "yellow" }),
+      mud.span(guild == "gshg" and "/gshg 350" or "/eff 350",
+               { fg = "yellow", underline = true, send = (guild == "gshg" and "/gshg 350" or "/eff 350") }),
+      mud.span(" — or run ", { fg = "yellow" }),
+      mud.span("score", { fg = "yellow", underline = true, send = "score" }),
+      mud.span(" (with discworld-vitals installed).", { fg = "yellow" }))
+    return
+  end
+
+  local result = M.compute(guild, bonus, a.mod)
+  local namew  = name_width(result.rows)
+
+  local head = string.format("Defensive bonus: %d \u{2192} optimal floater weight ~%.1f lb",
+    bonus, result.optimal_weight)
+  if a.mod and a.mod > 0 then
+    head = head .. string.format("   [+%g%% weight mod]", a.mod)
+  end
+  mud.note(head, { fg = "cyan", bold = true })
+
+  mud.note(fmt_row("  ", "Item", "Weight", "Block %", "Rec. bonus", namew),
+    { fg = "white", bold = true })
+
+  for _, r in ipairs(result.rows) do
+    local prefix = r.star and "* " or "  "
+    local line = fmt_row(prefix, r.name,
+      string.format("%.1f lb", r.weight), r.block, tostring(r.rec_bonus), namew)
+    local style = { fg = r.style.fg, bold = r.style.bold or r.star or nil }
+    mud.note(line, style)
+  end
+end
+
+mud.command("eff", function(m) run("eff", m.args) end, {
+  description = "Rate wizard floating shields for your defensive bonus.",
+  usage = USAGE.eff,
+})
+mud.command("gshg", function(m) run("gshg", m.args) end, {
+  description = "Rate witch floating kitchen utensils for your defensive bonus.",
+  usage = USAGE.gshg,
+})
+
 return M
