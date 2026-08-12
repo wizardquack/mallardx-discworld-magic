@@ -48,6 +48,12 @@
 --       Mirrors the events emitted by the live-cast modules (tpa.lua,
 --       ccc.lua, …); the payload shape is identical so grouping's
 --       existing subscriber works with no changes.
+--   net.mallard.discworld.shield.report_begin { subject = "self" }
+--       Fired on the SELF report header (`Arcane protection status:`).
+--       Marks the start of an authoritative listing of the user's own
+--       protections. shield_state.lua consumes this to reconcile its
+--       grid against the block that follows; consumers painting chips
+--       don't need it — they'll see the resulting shield.down events.
 --
 -- Scope deferrals:
 --   - The user themselves can appear inside this report as
@@ -140,9 +146,11 @@ mud.trigger(string.format(
 -- timed-out impact shield stays lit until something clears it, and
 -- `shields` is exactly what a user runs to resync.
 --
--- Emit a hard clear here and let the `* You ...` body lines that follow
--- repopulate whatever is genuinely up. This makes the report
--- authoritative for all five self chips rather than additive.
+-- We don't clear here: that would make every chip blink on each
+-- `shields`. Instead announce that a self report is starting, and let
+-- shield_state.lua diff what the body lines confirm against what it
+-- believes is up, emitting shield.down only for the difference. See the
+-- reconcile section there.
 --
 -- Note this can't ride on the "You do not have any arcane or divine
 -- protection." trigger below: that line only appears when you have
@@ -154,9 +162,8 @@ mud.trigger(string.format(
 mud.trigger([[^Arcane protection status:$]],
   function()
     current_target = ""
-    events.emit("net.mallard.discworld.shield.cleared", {
-      subject     = "self",
-      target_kind = "self",
+    events.emit("net.mallard.discworld.shield.report_begin", {
+      subject = "self",
     })
   end)
 

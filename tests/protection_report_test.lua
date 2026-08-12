@@ -6,8 +6,8 @@
 package.path = "./src/?.lua;./tests/?.lua;" .. package.path
 local h = require("harness")
 
-local UP      = "net.mallard.discworld.shield.up"
-local CLEARED = "net.mallard.discworld.shield.cleared"
+local UP           = "net.mallard.discworld.shield.up"
+local REPORT_BEGIN = "net.mallard.discworld.shield.report_begin"
 
 local passed = 0
 
@@ -46,18 +46,26 @@ local OTHER_TPA    = "is surrounded by a magical impact shield"
 
 -- ---------------------------------------------------------------------
 
-test("self `Arcane protection status:` header emits a self shield.cleared", function()
+test("self `Arcane protection status:` header announces a self report", function()
   setup()
   require("protection_report")
 
   h.fire(SELF_HEADER)
 
-  local cleared = last_emit(CLEARED)
-  assert(cleared, "expected a shield.cleared emit on the self report header")
-  assert(cleared.subject == "self",
-    "expected subject=self, got " .. tostring(cleared.subject))
-  assert(cleared.target_kind == "self",
-    "expected target_kind=self, got " .. tostring(cleared.target_kind))
+  local begun = last_emit(REPORT_BEGIN)
+  assert(begun, "expected a shield.report_begin emit on the self report header")
+  assert(begun.subject == "self",
+    "expected subject=self, got " .. tostring(begun.subject))
+end)
+
+test("self header does not clear chips outright (no flash on `shields`)", function()
+  setup()
+  require("protection_report")
+
+  h.fire(SELF_HEADER)
+
+  assert(#h.emits_for("net.mallard.discworld.shield.cleared") == 0,
+    "header must not emit a blanket cleared — that's what made the grid blink")
 end)
 
 test("self header resets current_target so later body lines don't misattribute", function()
@@ -72,35 +80,6 @@ test("self header resets current_target so later body lines don't misattribute",
 
   assert(#h.emits_for(UP) == 0,
     "expected no shield.up after the self header reset current_target")
-end)
-
--- The regression this file exists for: a TPA that lapsed silently (no wire
--- message exists for TPA expiry) leaves a stale `up` in the persisted grid,
--- and the user's instinct is to run `shields` to resync. Before this fix the
--- header reset only cleared magic's module-local state, so consumers kept
--- painting the stale chip — and because a self shield.cleared was only
--- emitted on "You do not have any arcane or divine protection.", a report
--- that DID list other protections could never clear anything.
-test("`shields` drops a stale shield that the report doesn't list", function()
-  setup()
-  local cs = require("char_switch")
-  require("shield_state")
-  require("protection_report")
-
-  cs.apply({ name = "Quack" })
-  h.dispatch(UP, { subject = "self", type = "tpa", glow = "invisible", percent = 100 })
-  h.dispatch(UP, { subject = "self", type = "eff", item = "Klatchian steel tower shield" })
-  assert(h.storage["shields/Quack"].tpa, "precondition: tpa should be recorded")
-
-  -- `shields` output: header, then only the EFF line (no TPA line — it
-  -- lapsed). EFF's own self trigger lives in eff.lua; simulate its event.
-  h.fire(SELF_HEADER)
-  h.dispatch(UP, { subject = "self", type = "eff", item = "Klatchian steel tower shield" })
-
-  local saved = h.storage["shields/Quack"]
-  assert(saved.tpa == nil, "expected the stale tpa record to be cleared by `shields`")
-  assert(saved.eff and saved.eff.item == "Klatchian steel tower shield",
-    "expected the eff record to survive the resync")
 end)
 
 print("---")
