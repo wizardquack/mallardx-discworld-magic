@@ -131,10 +131,38 @@ mud.trigger(string.format(
     current_target = ""
   end)
 
--- Self no-protection — different wire wording. Self state is already
--- managed by per-type `Arcane protection status:` reset triggers, but
--- the grouping panel benefits from a hard "everything cleared" signal
--- here so the chips drop the moment the user confirms nothing's up.
+-- Self report header (bare `shields` / `protections`). The per-type
+-- modules each reset their own module-local state off this same line,
+-- but that reset is invisible to consumers — so a chip for a shield the
+-- report DOESN'T list had no way to go dark. That matters because TPA
+-- can lapse with no wire message at all (the only self "down" line
+-- Discworld prints is "Your magical shield has broken."), so a
+-- timed-out impact shield stays lit until something clears it, and
+-- `shields` is exactly what a user runs to resync.
+--
+-- Emit a hard clear here and let the `* You ...` body lines that follow
+-- repopulate whatever is genuinely up. This makes the report
+-- authoritative for all five self chips rather than additive.
+--
+-- Note this can't ride on the "You do not have any arcane or divine
+-- protection." trigger below: that line only appears when you have
+-- NOTHING up, so a report listing some protections never reached it.
+--
+-- current_target is reset too — the body lines after this header are the
+-- user's, and a stale target from a preceding `mhas` block would
+-- otherwise still be attracting `up()` calls.
+mud.trigger([[^Arcane protection status:$]],
+  function()
+    current_target = ""
+    events.emit("net.mallard.discworld.shield.cleared", {
+      subject     = "self",
+      target_kind = "self",
+    })
+  end)
+
+-- Self no-protection — different wire wording. Redundant with the header
+-- clear above for the bare-`shields` path, but kept: the line also shows
+-- up on its own, and a second clear is idempotent.
 mud.trigger([[^You do not have any arcane(?: or divine)? protection\.$]],
   function()
     events.emit("net.mallard.discworld.shield.cleared", {
