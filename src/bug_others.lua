@@ -13,19 +13,31 @@
 --     started_at = epoch seconds,
 --   }
 
-local SIZES   = [[handful|cloud|small swarm|large swarm|vast swarm|plague]]
-local SPECIES = [[lacewings|stick insects|mayflies|praying mantids|butterflies|ladybirds|dragonflies|damselflies|moths|grasshoppers|winged termites|termites|sandflies|mosquitoes|gnats|crickets|flying ants|ants|locusts|horseflies|cicadas|bees|wasps|hornets|elephant beetles|assassin bugs]]
-local NAME    = [[[A-Z][a-zA-Z'-]+(?: [A-Z][a-zA-Z'-]+){0,3}]]
+-- Wire vocabulary + pattern shapes shared with bug.lua; see
+-- src/bug_patterns.lua for why each part is bounded the way it is.
+local P = require("bug_patterns")
+
+-- The other-player target: a captured name rather than the literal
+-- `you`. The up-line pattern attaches the target in two alternative
+-- branches, so the name lands in whichever of the two groups fired.
+local TARGET = "(" .. P.NAME .. ")"
+local function named(m, a, b)
+  local v = m[a]
+  if v == nil or v == "" then v = m[b] end
+  return v
+end
 
 local bug_others = {}   -- player → state row
 
 local function set_other_bug(player, size, bugs)
   if type(player) ~= "string" or player == "" then return end
   local row = bug_others[player]
-  local new_size = size or ""
-  local new_bugs = bugs or ""
   local prev_size = (row and row.size) or ""
   local prev_bugs = (row and row.bugs) or ""
+  -- Carry forward whichever attribute this line didn't mention — same
+  -- reasoning as bug.lua's set_bug.
+  local new_size = (size ~= nil and size ~= "") and size or prev_size
+  local new_bugs = (bugs ~= nil and bugs ~= "") and bugs or prev_bugs
 
   if not row then
     row = { size = new_size, bugs = new_bugs, started_at = os.time() }
@@ -66,12 +78,15 @@ local function break_other_bug(player, cause)
 end
 
 -- ---------------------------------------------------------------------
--- Cast line — same shape as self, with the player name captured at
--- the end. Captures: [1] = size, [2] = bugs, [3] = player.
+-- Cast line — same shape as self, with the player name captured in
+-- place of `you`. Captures: [1] = size, [2] = bugs, [3]/[4] = player.
 -- ---------------------------------------------------------------------
-mud.trigger(string.format(
-  [[^(?:[^,]+, )?[Tt]he (%s) of (%s) (?:flutters into a loosely-formed orbit around |forms a chaotic web of small white bodies around |starts to hover near |begins to circle |begins to circle around |begins to orbit |clusters haphazardly |begins to cluster around |begins to buzz erratically around |begins to buzz around |flutters into a chaotic formation around )(%s)(?:| happily| slowly|, chirping gently|, buzzing hungrily)\.$]],
-  SIZES, SPECIES, NAME),
+mud.trigger(P.up(TARGET),
+  function(m) set_other_bug(named(m, 3, 4), m[1], m[2]) end)
+
+-- Upgrade — a better species takes over. Captures the INCOMING species;
+-- see bug.lua for why this can't fold into the pattern above.
+mud.trigger(P.retreat(TARGET),
   function(m) set_other_bug(m[3], m[1], m[2]) end)
 
 -- ---------------------------------------------------------------------
@@ -79,13 +94,9 @@ mud.trigger(string.format(
 -- ---------------------------------------------------------------------
 
 -- Wore off.
-mud.trigger(string.format(
-  [[^The (%s) surrounding (%s) scatter in different directions and fly off\.$]],
-  SPECIES, NAME),
+mud.trigger(P.scatter(TARGET),
   function(m) break_other_bug(m[2], "scatter") end)
 
 -- Destroyed.
-mud.trigger(string.format(
-  [[^The last of the injured (%s) surrounding (%s) crash to the ground\.$]],
-  SPECIES, NAME),
+mud.trigger(P.crash(TARGET),
   function(m) break_other_bug(m[2], "destroyed") end)

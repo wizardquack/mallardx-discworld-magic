@@ -68,8 +68,8 @@
 --     resets `current_target` only on the next header (or on the
 --     no-protection line).
 
-local SIZES   = [[handful|cloud|small swarm|large swarm|vast swarm|plague]]
-local SPECIES = [[lacewings|stick insects|mayflies|praying mantids|butterflies|ladybirds|dragonflies|damselflies|moths|grasshoppers|winged termites|termites|sandflies|mosquitoes|gnats|crickets|flying ants|ants|locusts|horseflies|cicadas|bees|wasps|hornets|elephant beetles|assassin bugs]]
+-- Bugshield report lines share their pattern with the self side.
+local BUG     = require("bug_patterns")
 local DEITIES = [[Pishe|Gufnork|Gapp|Sandelfon|Fish|Hat|Sek|Aegadon|Cubal|Reebox]]
 local VIA     = [[power|protective armour|grace]]
 -- Both the leading word and any subsequent words allow either case —
@@ -229,8 +229,11 @@ mud.trigger([[^ \* Tiny threads of metal run criss-cross all over (?:his|her|its
 -- BUG — "* He is surrounded by a <size> of <bugs>." Captures: [1] = size, [2] = bugs.
 -- ---------------------------------------------------------------------
 
-mud.trigger(string.format(
-  [[^ \* (?:He|She|It) is surrounded by a (%s) of (%s)\.$]], SIZES, SPECIES),
+-- Shares the self report's pattern (see src/bug_patterns.lua). It is
+-- species-agnostic: an unlisted species — the in-game list and Quow's
+-- disagree on at least "mosquitos" and "elephant bugs" — would
+-- otherwise leave the member's BUG cell dark.
+mud.trigger(BUG.report(BUG.OTHER_SUBJECT),
   function(m) up("bug", { size = m[1], bugs = m[2] }) end)
 
 -- ---------------------------------------------------------------------

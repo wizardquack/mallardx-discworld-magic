@@ -14,7 +14,7 @@ local h = require("harness")
 local MODULES = {
   "main", "spelldata", "spell_tiers", "skill_paths", "char_switch", "shield_state",
   "eff", "eff_others", "tpa", "tpa_others", "ccc", "ccc_others",
-  "bug", "bug_others", "ms", "protection_report", "high", "spell", "mindspace",
+  "bug", "bug_patterns", "bug_others", "ms", "protection_report", "high", "spell", "mindspace",
 }
 
 local passed = 0

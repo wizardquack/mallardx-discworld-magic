@@ -16,10 +16,12 @@
 -- ---------------------------------------------------------------------
 -- 1. Vocabulary + module-local state.
 -- ---------------------------------------------------------------------
--- Bug shield has two attributes that change together: size (the cloud's
--- magnitude) and bugs (the species). Both are visible on every wire
--- line — the cast lines, the active-status report, and the scatter /
--- crash lines all carry the species (though only some carry size).
+-- Bug shield has two attributes: size (the cloud's magnitude) and bugs
+-- (the species). Neither is present on every wire line — a cast line may
+-- omit the size ("The assassin bugs begin to circle you slowly."), and
+-- the upgrade line changes the species while omitting the size — so
+-- set_bug carries the last known value forward for whichever the line
+-- didn't mention.
 --
 -- Two `down` paths share one event: "scatter" = timed-out / wore off;
 -- "crash" = destroyed in combat. The on-screen banner distinguishes
@@ -46,11 +48,10 @@
 --       previous_bugs    = last species before drop,
 --   }
 
--- The species + size alternations are reused across triggers; built once
--- so a regex tweak (new bug species, new cloud size) only touches the
--- vocab.
-local SIZES   = [[handful|cloud|small swarm|large swarm|vast swarm|plague]]
-local SPECIES = [[lacewings|stick insects|mayflies|praying mantids|butterflies|ladybirds|dragonflies|damselflies|moths|grasshoppers|winged termites|termites|sandflies|mosquitoes|gnats|crickets|flying ants|ants|locusts|horseflies|cicadas|bees|wasps|hornets|elephant beetles|assassin bugs]]
+-- The wire vocabulary and pattern shapes are shared with bug_others.lua
+-- (and checked against a line corpus by tests/bug_regex_test.lua) — see
+-- src/bug_patterns.lua for why each part is bounded the way it is.
+local P = require("bug_patterns")
 
 local char_switch = require("char_switch")
 
@@ -64,10 +65,15 @@ local bug_started_at = nil
 -- ---------------------------------------------------------------------
 
 local function set_bug(size, bugs)
-  local new_size = size or ""
-  local new_bugs = bugs or ""
   local prev_size = bug_size
   local prev_bugs = bug_bugs
+  -- Not every line carries both attributes. "The assassin bugs begin to
+  -- circle you slowly." omits the size, and the upgrade line omits it
+  -- while changing the species. Carry the last known value forward
+  -- rather than blanking the chip's detail on a line that simply didn't
+  -- mention it.
+  local new_size = (size ~= nil and size ~= "") and size or prev_size
+  local new_bugs = (bugs ~= nil and bugs ~= "") and bugs or prev_bugs
 
   if bug_state ~= "up" then
     bug_started_at = os.time()
@@ -140,36 +146,29 @@ end
 
 -- Active status from `protections` / `look at self`.
 -- Captures: [1] = size, [2] = bugs.
-mud.trigger(string.format(
-  [[^ \* You are surrounded by a (%s) of (%s)\.$]], SIZES, SPECIES),
-  function(m) set_bug(m[1], m[2]) end)
+mud.trigger(P.report(P.SELF_SUBJECT), function(m) set_bug(m[1], m[2]) end)
 
--- Cast line — a single regex shaped after Quow's
--- ArcaneShield1_YNU_BUG: optional mood prefix ("Buzzing drowsily, "),
--- then "the <size> of <species> <verb-phrase> you" with an optional
--- trailing-mood suffix. Captures: [1] = size, [2] = bugs.
-mud.trigger(string.format(
-  [[^(?:[^,]+, )?[Tt]he (%s) of (%s) (?:flutters into a loosely-formed orbit around |forms a chaotic web of small white bodies around |starts to hover near |begins to circle |begins to circle around |begins to orbit |clusters haphazardly |begins to cluster around |begins to buzz erratically around |begins to buzz around |flutters into a chaotic formation around )you(?:| happily| slowly|, chirping gently|, buzzing hungrily)\.$]],
-  SIZES, SPECIES),
-  function(m) set_bug(m[1], m[2]) end)
+-- Cast line. Captures: [1] = size (empty on lines that omit it),
+-- [2] = bugs.
+mud.trigger(P.up(P.SELF), function(m) set_bug(m[1], m[2]) end)
+
+-- Upgrade — the current cloud is driven off and a better species takes
+-- over. Captures the INCOMING species; the size is carried forward by
+-- set_bug. This has to stay a separate trigger: the generic cast line
+-- above would capture the departing swarm.
+mud.trigger(P.retreat(P.SELF), function(m) set_bug(m[1], m[2]) end)
 
 -- Warn — cloud thinning out, still up.
-mud.trigger(string.format(
-  [[^Some of the (%s) around you fly off\.$]], SPECIES),
+mud.trigger([[^Some of the [a-z][a-z ]* around you fly off\b]],
   function() warn_bug() end)
-mud.trigger(string.format(
-  [[^Some of the (%s) orbiting you break away and disperse\.$]], SPECIES),
+mud.trigger([[^Some of the [a-z][a-z ]* orbiting you break away\b]],
   function() warn_bug() end)
 
 -- Drop — wore off (timed out). Capture: [1] = bugs.
-mud.trigger(string.format(
-  [[^The (%s) surrounding you scatter in different directions and fly off\.$]], SPECIES),
-  function() drop_bug("scatter") end)
+mud.trigger(P.scatter(P.SELF), function() drop_bug("scatter") end)
 
 -- Drop — destroyed in combat. Capture: [1] = bugs.
-mud.trigger(string.format(
-  [[^The last of the injured (%s) surrounding you crash to the ground\.$]], SPECIES),
-  function() drop_bug("destroyed") end)
+mud.trigger(P.crash(P.SELF), function() drop_bug("destroyed") end)
 
 -- ---------------------------------------------------------------------
 -- 4. Arcane-protection-status reset.
