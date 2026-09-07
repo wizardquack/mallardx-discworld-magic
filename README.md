@@ -17,6 +17,7 @@ A `/spell` slash command for the ~115 Discworld spells.
 ```
 /spell              list every spell, grouped by type, in columns
 /spell <nick>       full info card — e.g. /spell wgs
+/spell <skill>      every spell that checks that skill — e.g. /spell fire
 /spell <fragment>   fuzzy match across nick / name / description
 /spell help         usage banner
 ```
@@ -31,6 +32,50 @@ installed and a snapshot captured (run its `/skills-refresh`), the
 spellcheck table gains four extra columns per stage: success chance,
 your current level + bonus in the stage's skill, and a hint at the
 bonus delta needed to reach the next chance tier.
+
+## `/spellskill` — spells by skill
+
+The inverse lookup. `/spell wgs` asks *what skills does this spell check?*;
+`/spellskill fire` asks *what spells check fire, and how close am I to each?*
+
+```
+/spellskill <skill>       spells checking that skill, likeliest cast first
+/spellskill <skill> tm    same rows, ordered by TM likelihood
+/spellskill help          usage banner + the list of skills spells check
+```
+
+Aliased to `/ss`. `/spell <skill>` reaches the default view too — the
+dedicated command is how you get the `tm` ordering.
+
+```
+Spells using fire (16 spells, 17 stages)
+  Bonus: 150   Level: 128   Ordered by: success chance
+  nick   Spell                             Stage  Chance  Max   Need  Consumes
+  fnp    Fyodor's Nimbus of Porterage        2/6     90%  160   +10b  -
+  kof    Kamikaze Oryctolagus Flammula       2/4     90%  160   +10b  yes
+  kof    Kamikaze Oryctolagus Flammula       4/4     90%  160   +10b  yes
+  ...
+```
+
+- **One row per stage, not per spell.** A spell can check the same skill
+  at two different stages with different thresholds (`kof` above), and the
+  stage is what you're actually graded on. `Stage` reads *this stage / the
+  spell's total*.
+- **`Chance`** is the same math as the `/spell` card's spellcheck table —
+  how many of the stage's ten thresholds your bonus clears. **`Max`** is
+  the bonus for `>99%`, and **`Need`** the delta to it.
+- **`Consumes`** flags whether casting costs you a component. Spells
+  needing a *reusable* prop (a staff, a mirror) read `-` alongside those
+  needing nothing at all — the column asks what a cast costs, not what it
+  requires.
+- Your bonus is constant down the listing (it's one skill), so it sits in
+  the header rather than repeating in a column.
+- Nicks are clickable and drill into the full `/spell` card.
+
+`tm` ordering ranks by `p × (1−p)`, so the stages nearest a coin-flip —
+where a teaching moment is likeliest — float to the top. Without a
+`/skills-refresh` snapshot both modes drop the chance columns and fall
+back to a max-bonus ladder, cheapest to master first.
 
 ## `/mindspace` — spell-memory budget
 
@@ -103,4 +148,5 @@ Consumers today:
 ## Credit
 
 Many thanks to Quow and Oki, whose work on similar plugins was
-invaluable in designing and building this one.
+invaluable in designing and building this one. `/spellskill`'s TM
+ordering follows tt_dw's `/spell_tm_list`.

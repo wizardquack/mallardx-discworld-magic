@@ -607,6 +607,460 @@ local function show_summary_row(nick)
 end
 
 -- ---------------------------------------------------------------------
+-- Viewport width
+-- ---------------------------------------------------------------------
+-- `mud.viewport()` is absent in older hosts (and in the test harness), so
+-- every caller guards on it. Centralised here because both /spells and
+-- /spellskill size their columns from it.
+local function viewport_cols()
+  local cols = 80
+  if type(mud.viewport) == "function" then
+    local vp = mud.viewport()
+    if type(vp) == "table" and type(vp.cols) == "number" and vp.cols > 0 then
+      cols = vp.cols
+    end
+  end
+  -- Leave a small right margin so cells never wrap on the terminal.
+  return math.max(20, cols - 2)
+end
+
+-- ---------------------------------------------------------------------
+-- /spellskill <skill> [tm] — every spell that uses a skill
+-- ---------------------------------------------------------------------
+--
+-- Answers the inverse of /spell <nick>: instead of "what skills does this
+-- spell check?", it asks "what spells check this skill, and how close am I
+-- to each?". Ported in spirit from tt_dw's /spell_tm_list (spellinfo.tin
+-- §532-655), which routes `/spell <skill>` to a TM-ordered listing.
+--
+-- One row PER STAGE, not per spell: a spell may check the same skill at
+-- two different stages with different thresholds (e.g. `kof` checks fire
+-- at stages 2 and 4; `binding` spans 45 stages across 43 spells), and the
+-- stage is what you're actually being graded on. The Stage column shows
+-- `2/4` — this stage out of the spell's total.
+--
+-- Your bonus is CONSTANT down the whole listing (it's a single skill), so
+-- it lives in the header rather than eating a column. That's what frees
+-- the width for Max (the bonus for >99%) and Need (the delta to it).
+
+-- Skills that actually appear in a spellcheck row, built from spelldata at
+-- load. This — NOT skill_paths.lua — is what /spell routes on, for two
+-- reasons: a skill no spell uses would route to an empty listing (worse
+-- than falling through to fuzzy), and adding a craft skill to skill_paths
+-- must never silently shadow a fuzzy search term. /spellskill validates
+-- against skill_paths instead, so it can distinguish "not a skill" from
+-- "a real skill that no spell uses".
+local SKILLS_IN_SPELLCHECK = {}
+for _, s in pairs(spells) do
+  for _, r in ipairs(s.spellcheck or {}) do
+    SKILLS_IN_SPELLCHECK[r.skill] = true
+  end
+end
+
+-- Full dotted path → short name, so `/spellskill magic.methods.elemental.fire`
+-- works as well as `/spellskill fire`. The dotted form is what the vitals
+-- snapshot and the game's own `skills` output use, so people have it to hand.
+local PATH_TO_SKILL = {}
+for short, path in pairs(SKILL_PATHS) do
+  PATH_TO_SKILL[path] = short
+end
+
+-- Sorted skill list, for the help banner and did-you-mean suggestions.
+local SORTED_SKILLS = {}
+for skill in pairs(SKILLS_IN_SPELLCHECK) do
+  table.insert(SORTED_SKILLS, skill)
+end
+table.sort(SORTED_SKILLS)
+
+-- Does casting this spell COST you a component?
+--
+-- Deliberately binary, which folds "needs nothing at all" (33 spells)
+-- together with "needs a reusable prop you must be holding" (18 — a staff,
+-- a mirror, a shield, a potato). That matches tt_dw's `!` marker, which
+-- likewise only asks whether a cast is repeatable without restocking.
+--
+-- The six patterns below classify every one of the 115 spells correctly
+-- (64 consuming / 51 not) against spelldata's free-text components field.
+-- Judgement call: `pmg`'s "a shimmering glass nugget (temporarily drained)"
+-- counts as NOT consumed — you keep the nugget.
+local CONSUMED_PATTERNS = {
+  "consumed", "blorple", "turned into", "degrades", "transferred", "becomes",
+}
+
+local function consumes_components(s)
+  local c = lower(s.components)
+  if c == "" or c == "none" then return false end
+  for _, p in ipairs(CONSUMED_PATTERNS) do
+    if c:find(p, 1, true) then return true end
+  end
+  return false
+end
+
+-- Resolve a user-supplied argument to a canonical short skill name.
+-- Accepts the short name ("fire") or the full dotted path. Returns nil if
+-- it isn't a skill at all.
+local function resolve_skill(arg)
+  local a = lower(arg)
+  if SKILL_PATHS[a] then return a end
+  return PATH_TO_SKILL[a]
+end
+
+-- Skill names that look like what the user meant — substring either way,
+-- so `chan` offers {chanting, channeling} and `elemental` offers nothing
+-- (it's a path segment, not a skill). Capped so a one-letter typo can't
+-- print the whole table.
+local function skill_suggestions(arg)
+  local a = lower(arg)
+  if a == "" then return {} end
+  local out = {}
+  for _, skill in ipairs(SORTED_SKILLS) do
+    if skill:find(a, 1, true) or a:find(skill, 1, true) then
+      table.insert(out, skill)
+      if #out >= 5 then break end
+    end
+  end
+  return out
+end
+
+-- Every (spell, stage) pair that checks `skill`, unsorted.
+local function skill_rows(skill)
+  local rows = {}
+  for _, nick in ipairs(SORTED_NICKS) do
+    local s = spells[nick]
+    local total = #(s.spellcheck or {})
+    for _, r in ipairs(s.spellcheck or {}) do
+      if r.skill == skill then
+        table.insert(rows, {
+          -- The TABLE KEY, not s.nick. Four spells carry a space-separated
+          -- alias list in that field ("cmseq cms2", "ehai eham eha2"), which
+          -- both widens the column and isn't what /spell looks up — dispatch
+          -- indexes `spells[arg]`, i.e. the key. The key is the canonical
+          -- single handle, so it's what the click-through needs too.
+          nick     = nick,
+          name     = s.name,
+          type     = s.type,
+          spell    = s,
+          stage    = r.stage,
+          stages   = total,
+          nums     = r.nums,
+          max      = tonumber(r.nums[10]),
+          consumes = consumes_components(s),
+        })
+      end
+    end
+  end
+  return rows
+end
+
+-- TM likelihood for one stage, mirroring tt_dw's @spell_tm_chance
+-- (spellinfo.tin §743-768): a teaching moment needs the check to be a
+-- near-miss, so the odds peak at a coin-flip and fall off towards both
+-- certain success and certain failure. tt_dw clamps each stage to 1..99%
+-- so a >99% or <1% stage still scores above zero.
+--
+-- Divergence from tt_dw, deliberate: it combines a spell's same-skill
+-- stages into one per-SPELL figure. We render one row per stage, so this
+-- is per-STAGE — which matches the row granularity and is the more
+-- actionable number (it tells you which stage is the one teaching you).
+local function tm_score(passed)
+  local p = passed * 10
+  if p < 1  then p = 1  end
+  if p > 99 then p = 99 end
+  p = p / 100
+  return p * (1 - p)
+end
+
+-- Sort in place. `bonus` is nil when we have no skills snapshot, which
+-- collapses the chance/TM keys for every row — so both modes degrade to
+-- the same max-bonus ladder rather than to an arbitrary order.
+--
+-- Every mode ends with the same tiebreakers (max bonus ascending, then
+-- name) because the primary keys tie constantly: five rows share 90% in a
+-- typical fire listing. Max-ascending continues the same "closest to done"
+-- gradient the primary key establishes, so ties read as a continuation
+-- rather than as noise.
+local function sort_rows(rows, mode, bonus)
+  table.sort(rows, function(a, b)
+    if bonus then
+      if mode == "tm" then
+        if a.tm ~= b.tm then return a.tm > b.tm end
+      else
+        if a.passed ~= b.passed then return a.passed > b.passed end
+      end
+    end
+    if a.max ~= b.max then return (a.max or 0) < (b.max or 0) end
+    if a.name ~= b.name then return a.name < b.name end
+    return a.stage < b.stage
+  end)
+end
+
+-- Render the listing. `opts.also` is the /spell delegation footer: the
+-- nicks that a fuzzy search for this word would have found but this
+-- listing does not contain (see dispatch).
+local function show_skill_list(skill, mode, opts)
+  opts = opts or {}
+  refresh_skills_snapshot()
+
+  local rows = skill_rows(skill)
+  if #rows == 0 then
+    mud.note("No spells use " .. skill .. ".", { fg = "yellow" })
+    return
+  end
+
+  local level, bonus = skill_lookup(skill)
+
+  -- Per-row derived values. Only computed when we have a bonus; without
+  -- one the Chance and Need columns are dropped entirely (same treatment
+  -- render_spellcheck gives its skill-aware columns).
+  for _, r in ipairs(rows) do
+    if bonus then
+      r.passed, r.chance = compute_chance(bonus, r.nums)
+      r.tm = tm_score(r.passed)
+      local delta = (r.max or 0) - bonus
+      r.need = delta > 0 and string.format("+%db", delta) or "done"
+    end
+  end
+  sort_rows(rows, mode, bonus)
+
+  -- ---------- Header ----------
+  local spell_count = 0
+  do
+    local seen = {}
+    for _, r in ipairs(rows) do
+      if not seen[r.nick] then seen[r.nick] = true; spell_count = spell_count + 1 end
+    end
+  end
+  local counts = spell_count .. (spell_count == 1 and " spell" or " spells")
+  if #rows ~= spell_count then
+    counts = counts .. ", " .. #rows .. " stages"
+  end
+  mud.note(
+    mud.span("Spells using ", { bold = true }),
+    mud.span(skill, PALETTE.skill_name),
+    mud.span(" (" .. counts .. ")", { bold = true })
+  )
+
+  if bonus then
+    local spans = {
+      mud.span("  Bonus: ", PALETTE.label),
+      mud.span(tostring(bonus)),
+    }
+    if level then
+      table.insert(spans, mud.span("   Level: ", PALETTE.label))
+      table.insert(spans, mud.span(tostring(level)))
+    end
+    table.insert(spans, mud.span("   Ordered by: ", PALETTE.label))
+    table.insert(spans, mud.span(mode == "tm" and "TM likelihood" or "success chance"))
+    mud.note(table.unpack(spans))
+  else
+    mud.note("  (Tip: run /skills-refresh with the discworld-vitals plugin installed to additionally see success chance and the bonus you still need.)",
+      { italic = true })
+  end
+
+  -- ---------- Column widths ----------
+  local nick_w, name_w, stage_w = #"nick", #"Spell", #"Stage"
+  for _, r in ipairs(rows) do
+    if #r.nick > nick_w then nick_w = #r.nick end
+    if #r.name > name_w then name_w = #r.name end
+    local st = #(r.stage .. "/" .. r.stages)
+    if st > stage_w then stage_w = st end
+  end
+
+  local chance_w, max_w, need_w, cons_w = 6, #"Max", #"Need", #"Consumes"
+  for _, r in ipairs(rows) do
+    local m = #tostring(r.max or "?")
+    if m > max_w then max_w = m end
+    if r.need and #r.need > need_w then need_w = #r.need end
+  end
+
+  -- Spell name is the elastic column: everything else is sized to its
+  -- content, and the name absorbs whatever the viewport has left. Clamped
+  -- to a floor so a very narrow terminal truncates rather than producing
+  -- a negative width.
+  local fixed = 2 + nick_w + 2 + 2 + stage_w + 2 + max_w + 2 + cons_w
+  if bonus then fixed = fixed + 2 + chance_w + 2 + need_w end
+  name_w = math.max(12, math.min(name_w, viewport_cols() - fixed))
+
+  local function pad_l(text, w) return string.format("%-" .. w .. "s", text) end
+  local function pad_r(text, w) return string.format("%"  .. w .. "s", text) end
+  -- ASCII ellipsis on purpose: pad_l measures with `#`, which counts BYTES,
+  -- so a multi-byte "…" would silently desync padding from visual width.
+  -- Spell names run to 47 chars, so this does fire on an 80-column terminal.
+  local function clip(text, w)
+    if #text <= w then return text end
+    return text:sub(1, math.max(1, w - 3)) .. "..."
+  end
+
+  -- ---------- Header row ----------
+  do
+    local spans = {
+      mud.span("  " .. pad_l("nick", nick_w), PALETTE.col_header),
+      mud.span("  "),
+      mud.span(pad_l("Spell", name_w),        PALETTE.col_header),
+      mud.span("  "),
+      mud.span(pad_r("Stage", stage_w),       PALETTE.col_header),
+    }
+    if bonus then
+      table.insert(spans, mud.span("  "))
+      table.insert(spans, mud.span(pad_r("Chance", chance_w), PALETTE.col_header))
+    end
+    table.insert(spans, mud.span("  "))
+    table.insert(spans, mud.span(pad_r("Max", max_w), PALETTE.col_header))
+    if bonus then
+      table.insert(spans, mud.span("  "))
+      table.insert(spans, mud.span(pad_r("Need", need_w), PALETTE.col_header))
+    end
+    table.insert(spans, mud.span("  "))
+    -- Last column: unpadded, so rows carry no trailing whitespace.
+    table.insert(spans, mud.span("Consumes", PALETTE.col_header))
+    mud.note(table.unpack(spans))
+  end
+
+  -- ---------- Data rows ----------
+  -- The nick is clickable and drills into the full card, matching the
+  -- affordance in /spell's list and match views. Only the nick text
+  -- carries the underline + handler; its padding is a separate plain span
+  -- so the link region stays tight to the word.
+  for _, r in ipairs(rows) do
+    local type_style = style_for(r.type)
+    local click_style = {}
+    for k, v in pairs(type_style) do click_style[k] = v end
+    click_style.underline = true
+    click_style.on_click = function() show_card(r.spell) end
+
+    local spans = { mud.span("  "), mud.span(r.nick, click_style) }
+    local pad = nick_w - #r.nick
+    if pad > 0 then table.insert(spans, mud.span(string.rep(" ", pad))) end
+    table.insert(spans, mud.span("  "))
+    table.insert(spans, mud.span(pad_l(clip(r.name, name_w), name_w), type_style))
+    table.insert(spans, mud.span("  "))
+    table.insert(spans, mud.span(pad_r(r.stage .. "/" .. r.stages, stage_w)))
+
+    local ch_style
+    if bonus then
+      ch_style = chance_style(r.passed)
+      table.insert(spans, mud.span("  "))
+      table.insert(spans, mud.span(pad_r(r.chance, chance_w), ch_style))
+    end
+    table.insert(spans, mud.span("  "))
+    table.insert(spans, mud.span(pad_r(tostring(r.max or "?"), max_w)))
+    if bonus then
+      -- Need shares Chance's tier colour so the eye reads "this is what
+      -- the +Nb buys you"; "done" gets the green-bold max treatment.
+      table.insert(spans, mud.span("  "))
+      local need_style = (r.need == "done") and PALETTE.hint_max or ch_style
+      table.insert(spans, mud.span(pad_r(r.need, need_w), need_style))
+    end
+    table.insert(spans, mud.span("  "))
+    table.insert(spans, mud.span(r.consumes and "yes" or "-",
+      r.consumes and PALETTE.comp_body or { fg = "light green" }))
+    mud.note(table.unpack(spans))
+  end
+
+  -- ---------- Footers ----------
+  -- Offer the other ordering. Suppressed without a snapshot, where both
+  -- modes produce the identical max-bonus ladder and the pointer would
+  -- be a lie.
+  if bonus then
+    if mode == "tm" then
+      mud.note("  (/spellskill " .. skill .. " for success-chance order)", { italic = true })
+    else
+      mud.note("  (/spellskill " .. skill .. " tm for TM-likelihood order)", { italic = true })
+    end
+  end
+
+  -- /spell delegation only: the fuzzy hits this listing swallowed. Nicks
+  -- are clickable so nothing is actually out of reach.
+  if opts.also and #opts.also > 0 then
+    local n = #opts.also
+    local spans = {
+      mud.span(string.format("  (%d more %s match%s ", n,
+        n == 1 and "spell" or "spells", n == 1 and "es" or ""), { italic = true }),
+      mud.span(string.format("%q", opts.query), { italic = true }),
+      mud.span(" by name or description: ", { italic = true }),
+    }
+    for i, nick in ipairs(opts.also) do
+      if i > 1 then table.insert(spans, mud.span(" ")) end
+      local s = spells[nick]
+      local st = style_for(s.type)
+      local cs = {}
+      for k, v in pairs(st) do cs[k] = v end
+      cs.underline = true
+      cs.on_click = function() show_card(s) end
+      table.insert(spans, mud.span(nick, cs))
+    end
+    table.insert(spans, mud.span(")", { italic = true }))
+    mud.note(table.unpack(spans))
+  end
+end
+
+local function show_skill_help()
+  mud.note("Usage: /spellskill <skill> [tm]", { bold = true })
+  mud.note("       /spellskill fire       spells checking fire, likeliest cast first")
+  mud.note("       /spellskill fire tm    same rows, ordered by TM likelihood")
+  mud.note("       /spellskill help       show this banner")
+  mud.note("A full dotted path works too: /spellskill magic.methods.elemental.fire")
+  mud.note("Skills:", { bold = true })
+  -- Reuse the /spells column layout so the two listings look related.
+  local cell_w = 0
+  for _, s in ipairs(SORTED_SKILLS) do
+    if #s > cell_w then cell_w = #s end
+  end
+  cell_w = cell_w + 2
+  local per_row = math.max(1, math.floor(viewport_cols() / cell_w))
+  local n = #SORTED_SKILLS
+  local rows = math.ceil(n / per_row)
+  for r = 1, rows do
+    local spans = { mud.span("  ") }
+    for c = 0, per_row - 1 do
+      local idx = c * rows + r
+      if idx <= n then
+        local skill = SORTED_SKILLS[idx]
+        table.insert(spans, mud.span(skill, PALETTE.skill_name))
+        -- Pad as a separate plain span, and skip it entirely on the last
+        -- cell of a row so no line carries trailing whitespace.
+        local pad = cell_w - #skill
+        if pad > 0 and (c + 1) * rows + r <= n then
+          table.insert(spans, mud.span(string.rep(" ", pad)))
+        end
+      end
+    end
+    mud.note(table.unpack(spans))
+  end
+end
+
+-- /spellskill dispatch. Validates against skill_paths (not the
+-- spellcheck-derived index) so a real-but-unused skill reports "no spells
+-- use it" rather than "unknown skill".
+local function skill_dispatch(arg)
+  arg = arg or ""
+  local word, rest = arg:match("^(%S+)%s*(.*)$")
+  if not word or word == "" or lower(word) == "help" then
+    show_skill_help()
+    return
+  end
+
+  local skill = resolve_skill(word)
+  if not skill then
+    mud.note("Unknown skill: " .. word, { fg = "red" })
+    local hints = skill_suggestions(word)
+    if #hints > 0 then
+      mud.note("Did you mean: " .. table.concat(hints, ", ") .. "?")
+    else
+      mud.note("Try /spellskill help for the list of skills spells check.")
+    end
+    return
+  end
+
+  local mode = (lower(rest) == "tm") and "tm" or "chance"
+  if rest ~= "" and mode ~= "tm" then
+    mud.note("Unknown option: " .. rest .. " — expected 'tm'.", { fg = "yellow" })
+    return
+  end
+  show_skill_list(skill, mode)
+end
+
+-- ---------------------------------------------------------------------
 -- /spells — multi-column nickname list grouped by type
 -- ---------------------------------------------------------------------
 -- Widths derive from `mud.viewport().cols` (live character-column count).
@@ -638,16 +1092,7 @@ local function widest_nick(nicks)
 end
 
 local function show_list()
-  local cols = 80
-  if type(mud.viewport) == "function" then
-    local vp = mud.viewport()
-    if type(vp) == "table" and type(vp.cols) == "number" and vp.cols > 0 then
-      cols = vp.cols
-    end
-  end
-  -- Leave a small right margin so cells don't ever wrap on the
-  -- terminal — 2 chars padding is enough for most fonts.
-  local usable = math.max(20, cols - 2)
+  local usable = viewport_cols()
 
   mud.note("All spells (" .. #SORTED_NICKS .. " total):", { bold = true })
 
@@ -700,10 +1145,13 @@ end
 local function show_help()
   mud.note("Usage: /spell <nickname | name fragment | description fragment>", { bold = true })
   mud.note("       /spell           list all spells, grouped by type")
+  mud.note("       /spell <skill>   every spell that checks that skill")
   mud.note("       /spell help      show this banner")
   mud.note("Examples:")
   mud.note("  /spell wgs           full info for Wungle's Great Sucking")
-  mud.note("  /spell fire          all spells matching 'fire'")
+  mud.note("  /spell fire          every spell checking the fire method")
+  mud.note("  /spell gaze          all spells matching 'gaze'")
+  mud.note("See also /spellskill (alias /ss) for TM-likelihood ordering.")
 end
 
 -- ---------------------------------------------------------------------
@@ -740,6 +1188,28 @@ local function dispatch(arg)
     return
   end
 
+  -- Exact skill name second, delegating to /spellskill's default view.
+  -- Safe to put ahead of the fuzzy search: no skill name collides with any
+  -- spell nick (checked across all 115 spells), so this can only ever
+  -- shadow SUBSTRING hits, never an exact lookup.
+  --
+  -- Eight skill words do fuzzy-match something today (`ring`, `fire`,
+  -- `talisman`, `air`, `scrying`, `banishing`, `rod`, `staff`), mostly
+  -- substring noise like "E-ring-yas'". Rather than lose them we pass the
+  -- ones this listing does NOT already contain to the footer, where they
+  -- render as clickable nicks. Nothing becomes unreachable.
+  local skill = SKILLS_IN_SPELLCHECK[lower(arg)] and lower(arg) or nil
+  if skill then
+    local in_listing = {}
+    for _, r in ipairs(skill_rows(skill)) do in_listing[r.nick] = true end
+    local also = {}
+    for _, nick in ipairs(fuzzy_matches(arg)) do
+      if not in_listing[nick] then table.insert(also, nick) end
+    end
+    show_skill_list(skill, "chance", { also = also, query = arg })
+    return
+  end
+
   local hits = fuzzy_matches(arg)
   if #hits == 0 then
     show_no_match(arg)
@@ -773,4 +1243,16 @@ end, {
   -- `/sp` shortcut. Ignored by Mallard < 0.15 (unknown opts keys are silently
   -- dropped), so this stays backward-compatible without a minimum_app_version bump.
   aliases = "sp",
+})
+
+-- The inverse lookup. `/spell <skill>` already reaches the default view;
+-- this is the canonical surface, and the only way to reach `tm` ordering.
+-- `/ss` is unclaimed across the plugin set — note `/skill` and `/sk` belong
+-- to discworld-vitals' skill-goal tracker, which is a different thing.
+mud.command("spellskill", function(m)
+  skill_dispatch(m.args)
+end, {
+  description = "List every spell that checks a given skill, with your success chance and the bonus needed to max it.",
+  usage = "spellskill <skill> — spells checking that skill, likeliest cast first; spellskill <skill> tm — ordered by TM likelihood; spellskill help — usage and the list of skills.",
+  aliases = "ss",
 })
